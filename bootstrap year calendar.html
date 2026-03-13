@@ -2,1738 +2,713 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>SPU lidar station measurements</title>
+  <title>SPU Lidar Station Measurements</title>
   <link rel="stylesheet" type="text/css" href="https://unpkg.com/js-year-calendar@latest/dist/js-year-calendar.min.css" />
 </head>
 <body>
 	<div id="calendar"></div>
-
   <script src="https://unpkg.com/js-year-calendar@latest/dist/js-year-calendar.min.js"></script>
 
 <script>
-
 var myDataSource = [
-   {
-    startDate: new Date(2018, 0, 22),
-    endDate: new Date(2018, 0, 24),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 0, 31),
-    endDate: new Date(2018, 1, 8),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 1, 9),
-    endDate: new Date(2018, 1, 9),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 1, 19),
-    endDate: new Date(2018, 1, 19),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 2, 9),
-    endDate: new Date(2018, 2, 9),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 2, 12),
-    endDate: new Date(2018, 3, 23),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 3, 24),
-    endDate: new Date(2018, 5, 11),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 5, 12),
-    endDate: new Date(2018, 5, 12),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 5, 13),
-    endDate: new Date(2018, 6, 2),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 6, 3),
-    endDate: new Date(2018, 6, 3),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 6, 5),
-    endDate: new Date(2018, 6, 18),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 6, 19),
-    endDate: new Date(2018, 6, 19),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 7, 1),
-    endDate: new Date(2018, 8, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 9, 1),
-    endDate: new Date(2018, 9, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 10, 1),
-    endDate: new Date(2018, 10, 1),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 10, 12),
-    endDate: new Date(2018, 10, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 10, 13),
-    endDate: new Date(2018, 10, 13),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2018, 10, 14),
-    endDate: new Date(2018, 10, 29),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 11, 2),
-    endDate: new Date(2018, 11, 2),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2018, 11, 4),
-    endDate: new Date(2018, 11, 13),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 11, 16),
-    endDate: new Date(2018, 11, 16),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2018, 11, 17),
-    endDate: new Date(2018, 11, 17),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2018, 11, 30),
-    endDate: new Date(2018, 11, 30),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 0, 3),
-    endDate: new Date(2019, 0, 3),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 0, 6),
-    endDate: new Date(2019, 0, 6),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 0, 8),
-    endDate: new Date(2019, 0, 31),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 1, 1),
-    endDate: new Date(2019, 1, 1),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 1, 3),
-    endDate: new Date(2019, 1, 10),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 1, 11),
-    endDate: new Date(2019, 1, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 2, 1),
-    endDate: new Date(2019, 2, 14),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 2, 24),
-    endDate: new Date(2019, 2, 24),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 2, 25),
-    endDate: new Date(2019, 2, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 2, 31),
-    endDate: new Date(2019, 2, 31),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 3, 1),
-    endDate: new Date(2019, 3, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 3, 16),
-    endDate: new Date(2019, 3, 18),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 3, 21),
-    endDate: new Date(2019, 3, 21),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 3, 22),
-    endDate: new Date(2019, 3, 22),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 3, 25),
-    endDate: new Date(2019, 3, 26),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 3, 28),
-    endDate: new Date(2019, 3, 28),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 3, 29),
-    endDate: new Date(2019, 3, 29),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 3, 30),
-    endDate: new Date(2019, 3, 30),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 4, 2),
-    endDate: new Date(2019, 4, 3),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 4, 5),
-    endDate: new Date(2019, 4, 5),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 4, 6),
-    endDate: new Date(2019, 4, 6),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 4, 14),
-    endDate: new Date(2019, 4, 14),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 4, 19),
-    endDate: new Date(2019, 4, 19),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 4, 20),
-    endDate: new Date(2019, 4, 20),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 4, 22),
-    endDate: new Date(2019, 4, 22),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 4, 23),
-    endDate: new Date(2019, 4, 23),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 4, 26),
-    endDate: new Date(2019, 4, 26),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 4, 27),
-    endDate: new Date(2019, 4, 27),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 4, 30),
-    endDate: new Date(2019, 4, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 4, 28),
-    endDate: new Date(2019, 4, 28),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 5, 6),
-    endDate: new Date(2019, 5, 7),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 5, 9),
-    endDate: new Date(2019, 5, 9),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 5, 10),
-    endDate: new Date(2019, 5, 14),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 5, 16),
-    endDate: new Date(2019, 5, 16),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 5, 17),
-    endDate: new Date(2019, 5, 17),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 5, 23),
-    endDate: new Date(2019, 5, 23),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 5, 24),
-    endDate: new Date(2019, 5, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 5, 26),
-    endDate: new Date(2019, 5, 26),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 6, 1),
-    endDate: new Date(2019, 6, 1),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 6, 2),
-    endDate: new Date(2019, 6, 12),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 6, 14),
-    endDate: new Date(2019, 6, 14),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 6, 15),
-    endDate: new Date(2019, 6, 18),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 6, 21),
-    endDate: new Date(2019, 6, 21),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 6, 22),
-    endDate: new Date(2019, 7, 1),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 7, 2),
-    endDate: new Date(2019, 7, 7),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 7, 8),
-    endDate: new Date(2019, 7, 9),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 7, 11),
-    endDate: new Date(2019, 7, 11),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 7, 12),
-    endDate: new Date(2019, 7, 15),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 7, 16),
-    endDate: new Date(2019, 7, 16),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 7, 18),
-    endDate: new Date(2019, 7, 18),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 7, 21),
-    endDate: new Date(2019, 7, 22),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 7, 23),
-    endDate: new Date(2019, 7, 23),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 7, 25),
-    endDate: new Date(2019, 7, 25),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 7, 26),
-    endDate: new Date(2019, 7, 28),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 7, 29),
-    endDate: new Date(2019, 7, 30),
-    color: '#F9E79F'
-  },{
-    startDate: new Date(2019, 8, 8),
-    endDate: new Date(2019, 8, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 8, 15),
-    endDate: new Date(2019, 8, 15),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 8, 17),
-    endDate: new Date(2019, 8, 27),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 8, 29),
-    endDate: new Date(2019, 8, 29),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 8, 30),
-    endDate: new Date(2019, 8, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 9, 1),
-    endDate: new Date(2019, 9, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 9, 27),
-    endDate: new Date(2019, 9, 27),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 9, 30),
-    endDate: new Date(2019, 9, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 10, 3),
-    endDate: new Date(2019, 10, 3),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 10, 4),
-    endDate: new Date(2019, 10, 4),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 10, 17),
-    endDate: new Date(2019, 10, 17),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 10, 21),
-    endDate: new Date(2019, 10, 22),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 11, 8),
-    endDate: new Date(2019, 11, 8),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 11, 13),
-    endDate: new Date(2019, 11, 13),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2019, 11, 15),
-    endDate: new Date(2019, 11, 15),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2019, 11, 16),
-    endDate: new Date(2019, 11, 20),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 0, 7),
-    endDate: new Date(2020, 0, 7),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 0, 12),
-    endDate: new Date(2020, 0, 12),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 0, 15),
-    endDate: new Date(2020, 0, 21),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 0, 26),
-    endDate: new Date(2020, 0, 26),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 0, 27),
-    endDate: new Date(2020, 0, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 1, 7),
-    endDate: new Date(2020, 1, 14),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 1, 16),
-    endDate: new Date(2020, 1, 16),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 1, 17),
-    endDate: new Date(2020, 1, 20),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 2, 4),
-    endDate: new Date(2020, 2, 13),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 2, 15),
-    endDate: new Date(2020, 2, 15),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 2, 16),
-    endDate: new Date(2020, 2, 24),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 3, 11),
-    endDate: new Date(2020, 3, 24),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 3, 26),
-    endDate: new Date(2020, 3, 26),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 3, 28),
-    endDate: new Date(2020, 3, 28),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 4, 5),
-    endDate: new Date(2020, 4, 5),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 4, 10),
-    endDate: new Date(2020, 4, 10),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 4, 17),
-    endDate: new Date(2020, 4, 17),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 4, 19),
-    endDate: new Date(2020, 4, 19),
-    color: '#A3E4D7'
-  }, {
-    startDate: new Date(2020, 4, 26),
-    endDate: new Date(2020, 4, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 4, 31),
-    endDate: new Date(2020, 4, 31),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 5, 19),
-    endDate: new Date(2020, 5, 19),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 5, 21),
-    endDate: new Date(2020, 5, 21),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 6, 8),
-    endDate: new Date(2020, 6, 8),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 6, 12),
-    endDate: new Date(2020, 6, 12),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 6, 21),
-    endDate: new Date(2020, 6, 21),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 7, 3),
-    endDate: new Date(2020, 7, 3),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 7, 9),
-    endDate: new Date(2020, 7, 9),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 7, 10),
-    endDate: new Date(2020, 7, 10),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 7, 24),
-    endDate: new Date(2020, 7, 24),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 7, 30),
-    endDate: new Date(2020, 7, 30),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 8, 13),
-    endDate: new Date(2020, 8, 13),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2020, 8, 14),
-    endDate: new Date(2020, 8, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2020, 9, 2),
-    endDate: new Date(2020, 9, 2),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021, 3, 9),
-    endDate: new Date(2021, 3, 9),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021,4,3),
-    endDate: new Date(2021, 4, 3),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021,4,4),
-    endDate: new Date(2021, 4, 5),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021,4,17),
-    endDate: new Date(2021, 4, 17),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021,4,19),
-    endDate: new Date(2021, 4, 24),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021,4,26),
-    endDate: new Date(2021, 4, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021, 5, 2),
-    endDate: new Date(2021, 5, 2),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021, 5, 5),
-    endDate: new Date(2021, 5, 5),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021, 5, 6),
-    endDate: new Date(2021, 5, 6),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2021, 5, 16),
-    endDate: new Date(2021, 5, 16),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021, 5, 25),
-    endDate: new Date(2021, 5, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021, 5, 28),
-    endDate: new Date(2021, 5, 28),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021, 6, 1),
-    endDate: new Date(2021, 6, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021, 6, 14),
-    endDate: new Date(2021, 6, 14),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021, 6, 23),
-    endDate: new Date(2021, 6, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2021, 6, 30),
-    endDate: new Date(2021, 6, 30),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2021, 7, 9),
-    endDate: new Date(2021, 7, 9),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 0, 17),
-    endDate: new Date(2022, 0, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 0, 26),
-    endDate: new Date(2022, 0, 27),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 1, 2),
-    endDate: new Date(2022, 1, 6),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 1, 9),
-    endDate: new Date(2022, 1, 10),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 1, 11),
-    endDate: new Date(2022, 1, 11),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 1, 12),
-    endDate: new Date(2022, 1, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 1, 16),
-    endDate: new Date(2022, 1, 16),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 1, 17),
-    endDate: new Date(2022, 1, 18),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 1, 19),
-    endDate: new Date(2022, 1, 19),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 1, 20),
-    endDate: new Date(2022, 1, 20),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 1, 21),
-    endDate: new Date(2022, 1, 27),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 2, 1),
-    endDate: new Date(2022, 2, 1),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 2, 3),
-    endDate: new Date(2022, 2, 3),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 2, 6),
-    endDate: new Date(2022, 2, 6),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 2, 18),
-    endDate: new Date(2022, 2, 19),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 2, 22),
-    endDate: new Date(2022, 2, 22),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 2, 24),
-    endDate: new Date(2022, 2, 24),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 2, 25),
-    endDate: new Date(2022, 2, 27),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 3, 12),
-    endDate: new Date(2022, 3, 12),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 3, 19),
-    endDate: new Date(2022, 3, 19),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 3, 25),
-    endDate: new Date(2022, 3, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 3, 26),
-    endDate: new Date(2022, 3, 28),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 4, 17),
-    endDate: new Date(2022, 4, 17),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 4, 20),
-    endDate: new Date(2022, 4, 20),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 4, 24),
-    endDate: new Date(2022, 4, 24),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 5, 6),
-    endDate: new Date(2022, 5, 6),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 5, 13),
-    endDate: new Date(2022, 5, 13),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 5, 21),
-    endDate: new Date(2022, 5, 28),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 5, 29),
-    endDate: new Date(2022, 5, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 6, 4),
-    endDate: new Date(2022, 6, 5),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 6, 6),
-    endDate: new Date(2022, 6, 6),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 6, 7),
-    endDate: new Date(2022, 6, 7),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 6, 10),
-    endDate: new Date(2022, 6, 10),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2022, 6, 11),
-    endDate: new Date(2022, 6, 22),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 6, 24),
-    endDate: new Date(2022, 6, 24),
-    color: '#CCD1D1'
-  },{
-    startDate: new Date(2022, 6, 25),
-    endDate: new Date(2022, 6, 25),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 6, 26),
-    endDate: new Date(2022, 6, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 6, 27),
-    endDate: new Date(2022, 6, 27),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 6, 28),
-    endDate: new Date(2022, 6, 28),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 7, 02),
-    endDate: new Date(2022, 7, 15),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 7, 23),
-    endDate: new Date(2022, 7, 24),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 7, 31),
-    endDate: new Date(2022, 8, 1),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 8, 2),
-    endDate: new Date(2022, 8, 2),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 8, 8),
-    endDate: new Date(2022, 8, 9),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 8, 19),
-    endDate: new Date(2022, 8, 19),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 8, 23),
-    endDate: new Date(2022, 8, 23),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 9, 6),
-    endDate: new Date(2022, 9, 20),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2022, 9, 24),
-    endDate: new Date(2022, 9, 24),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2022, 9, 25),
-    endDate: new Date(2022, 9, 25),
-    color: '#BFA99B'
-  },{
-    startDate: new Date(2022, 9, 26),
-    endDate: new Date(2023, 1, 15),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 2, 2),
-    endDate: new Date(2023, 2, 7),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 2, 8),
-    endDate: new Date(2023, 2, 10),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 2, 16),
-    endDate: new Date(2023, 2, 21),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 2, 22),
-    endDate: new Date(2023, 2, 22),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 2, 29),
-    endDate: new Date(2023, 4, 9),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 4, 12),
-    endDate: new Date(2023, 4, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 4, 15),
-    endDate: new Date(2023, 4, 15),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 4, 16),
-    endDate: new Date(2023, 4, 19),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 4, 16),
-    endDate: new Date(2023, 4, 19),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 4, 22),
-    endDate: new Date(2023, 4, 22),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 4, 23),
-    endDate: new Date(2023, 4, 25),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 4, 26),
-    endDate: new Date(2023, 4, 26),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 5, 05),
-    endDate: new Date(2023, 5, 05),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 5, 06),
-    endDate: new Date(2023, 5, 07),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 5, 19),
-    endDate: new Date(2023, 5, 21),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 5, 22),
-    endDate: new Date(2023, 5, 23),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 5, 26),
-    endDate: new Date(2023, 5, 29),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 6, 04),
-    endDate: new Date(2023, 6, 06),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 6, 07),
-    endDate: new Date(2023, 6, 07),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 6, 11),
-    endDate: new Date(2023, 6, 11),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 6, 12),
-    endDate: new Date(2023, 6, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 6, 14),
-    endDate: new Date(2023, 6, 14),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 6, 24),
-    endDate: new Date(2023, 6, 26),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 6, 27),
-    endDate: new Date(2023, 6, 28),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 7, 01),
-    endDate: new Date(2023, 7, 01),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 7, 02),
-    endDate: new Date(2023, 7, 04),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 7, 07),
-    endDate: new Date(2023, 7, 07),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 7, 17),
-    endDate: new Date(2023, 7, 17),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 7, 21),
-    endDate: new Date(2023, 7, 21),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 7, 23),
-    endDate: new Date(2023, 7, 23),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 7, 30),
-    endDate: new Date(2023, 7, 30),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 8, 11),
-    endDate: new Date(2023, 8, 11),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 8, 12),
-    endDate: new Date(2023, 8, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 8, 13),
-    endDate: new Date(2023, 8, 13),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 9, 11),
-    endDate: new Date(2023, 9, 11),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 10, 6),
-    endDate: new Date(2023, 10, 6),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 10, 7),
-    endDate: new Date(2023, 10, 7),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2023, 10, 8),
-    endDate: new Date(2023, 10, 8),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2023, 10, 13),
-    endDate: new Date(2023, 10, 13),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2024, 02, 14),
-    endDate: new Date(2024, 02, 14),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 02, 15),
-    endDate: new Date(2024, 02, 15),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2024, 03, 19),
-    endDate: new Date(2024, 03, 19),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2024, 03, 22),
-    endDate: new Date(2024, 03, 23),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2024, 04, 07),
-    endDate: new Date(2024, 04, 07),
-    color: '#A3E4D7'
-    },{
-    startDate: new Date(2024, 04, 08),
-    endDate: new Date(2024, 04, 08),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2024, 04, 22),
-    endDate: new Date(2024, 04, 23),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 07, 06),
-    endDate: new Date(2024, 07, 07),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 07, 08),
-    endDate: new Date(2024, 07, 08),
-    color: '#d29af5'
-  },{
-    startDate: new Date(2024, 07, 12),
-    endDate: new Date(2024, 07, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 07, 15),
-    endDate: new Date(2024, 07, 15),
-    color: '#789ef0'
-  },{
-    startDate: new Date(2024, 07, 17),
-    endDate: new Date(2024, 07, 17),
-    color: '#d29af5'
-  },{
-    startDate: new Date(2024, 07, 19),
-    endDate: new Date(2024, 07, 19),
-    color: '#d29af5'
-  },{
-    startDate: new Date(2024, 07, 20),
-    endDate: new Date(2024, 07, 23),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 07, 26),
-    endDate: new Date(2024, 07, 29),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 08, 02),
-    endDate: new Date(2024, 08, 02),
-    color: '#d29af5'
-  },{
-    startDate: new Date(2024, 08, 03),
-    endDate: new Date(2024, 08, 03),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 08, 04),
-    endDate: new Date(2024, 08, 04),
-    color: '#d29af5'
-  },{
-    startDate: new Date(2024, 08, 09),
-    endDate: new Date(2024, 08, 09),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 08, 11),
-    endDate: new Date(2024, 08, 11),
-    color: '#d29af5'
-  },{
-    startDate: new Date(2024, 08, 12),
-    endDate: new Date(2024, 08, 12),
-    color: '#A3E4D7'
-  },{
-    startDate: new Date(2024, 08, 13),
-    endDate: new Date(2024, 08, 13),
-    color:'#d29af5'
-  }
-  ,
-  {
+    {
     startDate: new Date(2024, 7, 12),
     endDate: new Date(2024, 7, 12),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240812saam_level1_rcs_Gallery.html'
+    url: '2024/20240812saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 23),
     endDate: new Date(2024, 7, 23),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240823saam_level1_rcs_Gallery.html'
+    url: '2024/20240823saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 19),
     endDate: new Date(2024, 11, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241219saam_level1_rcs_Gallery.html'
+    url: '2024/20241219saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 21),
     endDate: new Date(2024, 7, 21),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240821sant_level1_rcs_Gallery.html'
+    url: '2024/20240821sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 15),
     endDate: new Date(2024, 11, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241215saam_level1_rcs_Gallery.html'
+    url: '2024/20241215saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 2, 14),
     endDate: new Date(2024, 2, 14),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240314sant_level1_rcs_Gallery.html'
+    url: '2024/20240314sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 5, 11),
     endDate: new Date(2024, 5, 11),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240611sant_level1_rcs_Gallery.html'
+    url: '2024/20240611sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 1, 7),
     endDate: new Date(2024, 1, 7),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240207saam_level1_rcs_Gallery.html'
+    url: '2024/20240207saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 7),
     endDate: new Date(2024, 9, 7),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241007saam_level1_rcs_Gallery.html'
+    url: '2024/20241007saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 2, 14),
     endDate: new Date(2024, 2, 14),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240314saam_level1_rcs_Gallery.html'
+    url: '2024/20240314saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 1, 6),
     endDate: new Date(2024, 1, 6),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240206sant_level1_rcs_Gallery.html'
+    url: '2024/20240206sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 5),
     endDate: new Date(2024, 8, 5),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240905saam_level1_rcs_Gallery.html'
+    url: '2024/20240905saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 25),
     endDate: new Date(2024, 8, 25),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240925saam_level1_rcs_Gallery.html'
+    url: '2024/20240925saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 11),
     endDate: new Date(2024, 10, 11),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241111saam_level1_rcs_Gallery.html'
+    url: '2024/20241111saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 3),
     endDate: new Date(2024, 3, 3),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240403sant_level1_rcs_Gallery.html'
+    url: '2024/20240403sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 2),
     endDate: new Date(2024, 8, 2),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240902saam_level1_rcs_Gallery.html'
+    url: '2024/20240902saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 8),
     endDate: new Date(2024, 9, 8),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241008saam_level1_rcs_Gallery.html'
+    url: '2024/20241008saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 5, 20),
     endDate: new Date(2024, 5, 20),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240620sant_level1_rcs_Gallery.html'
+    url: '2024/20240620sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 9),
     endDate: new Date(2024, 8, 9),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240909saam_level1_rcs_Gallery.html'
+    url: '2024/20240909saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 23),
     endDate: new Date(2024, 3, 23),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240423sant_level1_rcs_Gallery.html'
+    url: '2024/20240423sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 4, 7),
     endDate: new Date(2024, 4, 7),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240507saam_level1_rcs_Gallery.html'
+    url: '2024/20240507saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 4),
     endDate: new Date(2024, 8, 4),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240904saam_level1_rcs_Gallery.html'
+    url: '2024/20240904saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 1),
     endDate: new Date(2024, 9, 1),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241001saam_level1_rcs_Gallery.html'
+    url: '2024/20241001saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 12),
     endDate: new Date(2024, 8, 12),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240912sant_level1_rcs_Gallery.html'
+    url: '2024/20240912sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 10),
     endDate: new Date(2024, 8, 10),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240910sant_level1_rcs_Gallery.html'
+    url: '2024/20240910sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 13),
     endDate: new Date(2024, 11, 13),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241213sapm_level1_rcs_Gallery.html'
+    url: '2024/20241213sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 20),
     endDate: new Date(2024, 7, 20),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240820saam_level1_rcs_Gallery.html'
+    url: '2024/20240820saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 4),
     endDate: new Date(2024, 3, 4),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240404sapm_level1_rcs_Gallery.html'
+    url: '2024/20240404sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 2),
     endDate: new Date(2024, 8, 2),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240902sant_level1_rcs_Gallery.html'
+    url: '2024/20240902sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 24),
     endDate: new Date(2024, 8, 24),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240924saam_level1_rcs_Gallery.html'
+    url: '2024/20240924saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 2, 15),
     endDate: new Date(2024, 2, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240315saam_level1_rcs_Gallery.html'
+    url: '2024/20240315saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 16),
     endDate: new Date(2024, 11, 16),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241216sant_level1_rcs_Gallery.html'
+    url: '2024/20241216sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 4, 22),
     endDate: new Date(2024, 4, 22),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240522saam_level1_rcs_Gallery.html'
+    url: '2024/20240522saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 20),
     endDate: new Date(2024, 8, 20),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240920saam_level1_rcs_Gallery.html'
+    url: '2024/20240920saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 25),
     endDate: new Date(2024, 10, 25),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241125saam_level1_rcs_Gallery.html'
+    url: '2024/20241125saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 27),
     endDate: new Date(2024, 10, 27),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241127saam_level1_rcs_Gallery.html'
+    url: '2024/20241127saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 12),
     endDate: new Date(2024, 8, 12),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240912saam_level1_rcs_Gallery.html'
+    url: '2024/20240912saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 6),
     endDate: new Date(2024, 11, 6),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241206saam_level1_rcs_Gallery.html'
+    url: '2024/20241206saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 17),
     endDate: new Date(2024, 9, 17),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241017saam_level1_rcs_Gallery.html'
+    url: '2024/20241017saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 27),
     endDate: new Date(2024, 7, 27),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240827saam_level1_rcs_Gallery.html'
+    url: '2024/20240827saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 19),
     endDate: new Date(2024, 7, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240819saam_level1_rcs_Gallery.html'
+    url: '2024/20240819saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 4, 7),
     endDate: new Date(2024, 4, 7),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240507sant_level1_rcs_Gallery.html'
+    url: '2024/20240507sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 31),
     endDate: new Date(2024, 9, 31),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241031saam_level1_rcs_Gallery.html'
+    url: '2024/20241031saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 18),
     endDate: new Date(2024, 11, 18),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241218saam_level1_rcs_Gallery.html'
+    url: '2024/20241218saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 1),
     endDate: new Date(2024, 3, 1),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240401sant_level1_rcs_Gallery.html'
+    url: '2024/20240401sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 15),
     endDate: new Date(2024, 7, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240815saam_level1_rcs_Gallery.html'
+    url: '2024/20240815saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 8),
     endDate: new Date(2024, 7, 8),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240808saam_level1_rcs_Gallery.html'
+    url: '2024/20240808saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 26),
     endDate: new Date(2024, 8, 26),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240926saam_level1_rcs_Gallery.html'
+    url: '2024/20240926saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 2, 31),
     endDate: new Date(2024, 2, 31),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240331sant_level1_rcs_Gallery.html'
+    url: '2024/20240331sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 18),
     endDate: new Date(2024, 9, 18),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241018saam_level1_rcs_Gallery.html'
+    url: '2024/20241018saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 26),
     endDate: new Date(2024, 8, 26),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240926sant_level1_rcs_Gallery.html'
+    url: '2024/20240926sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 5, 13),
     endDate: new Date(2024, 5, 13),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240613sant_level1_rcs_Gallery.html'
+    url: '2024/20240613sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 5, 6),
     endDate: new Date(2024, 5, 6),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240606sant_level1_rcs_Gallery.html'
+    url: '2024/20240606sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 27),
     endDate: new Date(2024, 7, 27),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240827sant_level1_rcs_Gallery.html'
+    url: '2024/20240827sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 21),
     endDate: new Date(2024, 7, 21),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240821saam_level1_rcs_Gallery.html'
+    url: '2024/20240821saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 22),
     endDate: new Date(2024, 3, 22),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240422sant_level1_rcs_Gallery.html'
+    url: '2024/20240422sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 30),
     endDate: new Date(2024, 8, 30),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240930saam_level1_rcs_Gallery.html'
+    url: '2024/20240930saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 13),
     endDate: new Date(2024, 8, 13),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240913saam_level1_rcs_Gallery.html'
+    url: '2024/20240913saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 11),
     endDate: new Date(2024, 8, 11),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240911sant_level1_rcs_Gallery.html'
+    url: '2024/20240911sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 15),
     endDate: new Date(2024, 9, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241015sapm_level1_rcs_Gallery.html'
+    url: '2024/20241015sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 19),
     endDate: new Date(2024, 3, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240419saam_level1_rcs_Gallery.html'
+    url: '2024/20240419saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 13),
     endDate: new Date(2024, 11, 13),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241213saam_level1_rcs_Gallery.html'
+    url: '2024/20241213saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 23),
     endDate: new Date(2024, 8, 23),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240923sant_level1_rcs_Gallery.html'
+    url: '2024/20240923sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 15),
     endDate: new Date(2024, 9, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241015saam_level1_rcs_Gallery.html'
+    url: '2024/20241015saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 2),
     endDate: new Date(2024, 9, 2),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241002saam_level1_rcs_Gallery.html'
+    url: '2024/20241002saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 25),
     endDate: new Date(2024, 10, 25),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241125sapm_level1_rcs_Gallery.html'
+    url: '2024/20241125sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 22),
     endDate: new Date(2024, 7, 22),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240822saam_level1_rcs_Gallery.html'
+    url: '2024/20240822saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 6),
     endDate: new Date(2024, 7, 6),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240806saam_level1_rcs_Gallery.html'
+    url: '2024/20240806saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 4, 6),
     endDate: new Date(2024, 4, 6),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240506sant_level1_rcs_Gallery.html'
+    url: '2024/20240506sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 19),
     endDate: new Date(2024, 10, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241119sapm_level1_rcs_Gallery.html'
+    url: '2024/20241119sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 28),
     endDate: new Date(2024, 10, 28),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241128saam_level1_rcs_Gallery.html'
+    url: '2024/20241128saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 11),
     endDate: new Date(2024, 10, 11),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241111sapm_level1_rcs_Gallery.html'
+    url: '2024/20241111sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 5, 10),
     endDate: new Date(2024, 5, 10),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240610sant_level1_rcs_Gallery.html'
+    url: '2024/20240610sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 30),
     endDate: new Date(2024, 3, 30),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240430sant_level1_rcs_Gallery.html'
+    url: '2024/20240430sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 8),
     endDate: new Date(2024, 9, 8),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241008sapm_level1_rcs_Gallery.html'
+    url: '2024/20241008sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 4),
     endDate: new Date(2024, 3, 4),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240404sant_level1_rcs_Gallery.html'
+    url: '2024/20240404sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 10),
     endDate: new Date(2024, 8, 10),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240910saam_level1_rcs_Gallery.html'
+    url: '2024/20240910saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 1, 22),
     endDate: new Date(2024, 1, 22),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240222saam_level1_rcs_Gallery.html'
+    url: '2024/20240222saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 3),
     endDate: new Date(2024, 8, 3),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240903saam_level1_rcs_Gallery.html'
+    url: '2024/20240903saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 30),
     endDate: new Date(2024, 7, 30),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240830saam_level1_rcs_Gallery.html'
+    url: '2024/20240830saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 16),
     endDate: new Date(2024, 11, 16),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241216saam_level1_rcs_Gallery.html'
+    url: '2024/20241216saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 19),
     endDate: new Date(2024, 3, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240419sant_level1_rcs_Gallery.html'
+    url: '2024/20240419sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 3, 5),
     endDate: new Date(2024, 3, 5),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240405sant_level1_rcs_Gallery.html'
+    url: '2024/20240405sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 1),
     endDate: new Date(2024, 9, 1),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241001sant_level1_rcs_Gallery.html'
+    url: '2024/20241001sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 13),
     endDate: new Date(2024, 8, 13),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240913sant_level1_rcs_Gallery.html'
+    url: '2024/20240913sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 1),
     endDate: new Date(2024, 8, 1),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240901sant_level1_rcs_Gallery.html'
+    url: '2024/20240901sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 12),
     endDate: new Date(2024, 10, 12),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241112saam_level1_rcs_Gallery.html'
+    url: '2024/20241112saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 26),
     endDate: new Date(2024, 10, 26),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241126sant_level1_rcs_Gallery.html'
+    url: '2024/20241126sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 12),
     endDate: new Date(2024, 11, 12),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241212saam_level1_rcs_Gallery.html'
+    url: '2024/20241212saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 28),
     endDate: new Date(2024, 7, 28),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240828saam_level1_rcs_Gallery.html'
+    url: '2024/20240828saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 19),
     endDate: new Date(2024, 11, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241219sapm_level1_rcs_Gallery.html'
+    url: '2024/20241219sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 19),
     endDate: new Date(2024, 7, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240819sant_level1_rcs_Gallery.html'
+    url: '2024/20240819sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 4, 8),
     endDate: new Date(2024, 4, 8),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240508sant_level1_rcs_Gallery.html'
+    url: '2024/20240508sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 9),
     endDate: new Date(2024, 11, 9),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241209saam_level1_rcs_Gallery.html'
+    url: '2024/20241209saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 7),
     endDate: new Date(2024, 7, 7),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240807saam_level1_rcs_Gallery.html'
+    url: '2024/20240807saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 26),
     endDate: new Date(2024, 7, 26),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240826sant_level1_rcs_Gallery.html'
+    url: '2024/20240826sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 1, 21),
     endDate: new Date(2024, 1, 21),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240221saam_level1_rcs_Gallery.html'
+    url: '2024/20240221saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 22),
     endDate: new Date(2024, 8, 22),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240922saam_level1_rcs_Gallery.html'
+    url: '2024/20240922saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 1, 23),
     endDate: new Date(2024, 1, 23),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240223saam_level1_rcs_Gallery.html'
+    url: '2024/20240223saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 23),
     endDate: new Date(2024, 8, 23),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240923saam_level1_rcs_Gallery.html'
+    url: '2024/20240923saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 31),
     endDate: new Date(2024, 9, 31),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241031sapm_level1_rcs_Gallery.html'
+    url: '2024/20241031sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 2, 15),
     endDate: new Date(2024, 2, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240315sant_level1_rcs_Gallery.html'
+    url: '2024/20240315sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 15),
     endDate: new Date(2024, 7, 15),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240815sant_level1_rcs_Gallery.html'
+    url: '2024/20240815sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 11),
     endDate: new Date(2024, 8, 11),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240911saam_level1_rcs_Gallery.html'
+    url: '2024/20240911saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 26),
     endDate: new Date(2024, 7, 26),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240826saam_level1_rcs_Gallery.html'
+    url: '2024/20240826saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 2, 12),
     endDate: new Date(2024, 2, 12),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240312saam_level1_rcs_Gallery.html'
+    url: '2024/20240312saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 2),
     endDate: new Date(2024, 11, 2),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241202saam_level1_rcs_Gallery.html'
+    url: '2024/20241202saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 16),
     endDate: new Date(2024, 7, 16),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240816sant_level1_rcs_Gallery.html'
+    url: '2024/20240816sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 1),
     endDate: new Date(2024, 10, 1),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241101saam_level1_rcs_Gallery.html'
+    url: '2024/20241101saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 29),
     endDate: new Date(2024, 7, 29),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240829saam_level1_rcs_Gallery.html'
+    url: '2024/20240829saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 7, 22),
     endDate: new Date(2024, 7, 22),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240822sant_level1_rcs_Gallery.html'
+    url: '2024/20240822sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 9, 2),
     endDate: new Date(2024, 9, 2),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241002sapm_level1_rcs_Gallery.html'
+    url: '2024/20241002sapm_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 26),
     endDate: new Date(2024, 10, 26),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241126saam_level1_rcs_Gallery.html'
+    url: '2024/20241126saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 10, 19),
     endDate: new Date(2024, 10, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241119saam_level1_rcs_Gallery.html'
+    url: '2024/20241119saam_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 8, 3),
     endDate: new Date(2024, 8, 3),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20240903sant_level1_rcs_Gallery.html'
+    url: '2024/20240903sant_level1_rcs_Gallery.html'
   },
   {
     startDate: new Date(2024, 11, 19),
     endDate: new Date(2024, 11, 19),
     color: '#A3E4D7',
-    url: '/home/lidarnet-compaq/Documents/01-milgrau/milgrau_xD/atualiza-site/ql-measurements/2024/20241219sant_level1_rcs_Gallery.html'
-  }
+    url: '2024/20241219sant_level1_rcs_Gallery.html'
+  },
   // MARCADOR_AUTOMATICO
-  ];
-
+];
 
 var diasComMedida = {};
 myDataSource.forEach(function(evento) {
@@ -1745,7 +720,7 @@ myDataSource.forEach(function(evento) {
     while(diaAtual <= dataFim) {
         var dataFormatada = diaAtual.getFullYear() + '-' + diaAtual.getMonth() + '-' + diaAtual.getDate();
         diasComMedida[dataFormatada] = true;
-        diaAtual.setDate(diaAtual.getDate() + 1); // 
+        diaAtual.setDate(diaAtual.getDate() + 1); 
     }
 });
 
@@ -1770,12 +745,10 @@ new Calendar('#calendar', {
     
     clickDay: function(e) {
         if(e.events.length > 0) {
-            var day = ('0' + e.date.getDate()).slice(-2);
-            var month = ('0' + (e.date.getMonth() + 1)).slice(-2);
-            var year = e.date.getFullYear();
-            
-            var githubLink = 'https://spulidar.github.io/ql-measurements/htmlfiles/';
-            window.open(githubLink + year + '_' + month + '_' + day + '_QL_SPULidarStation.html', "newWindow");
+            var evento = e.events[0];
+            if (evento.url) {
+                window.open(evento.url, "_blank");
+            }
         }
     }
 });
