@@ -747,10 +747,13 @@ new Calendar('#calendar', {
         if(e.events.length > 0) {
             var evento = e.events[0];
             if (evento.url) {
-                window.open(evento.url, "_blank");
+                // Aqui juntamos o endereço fixo do seu GitHub com o caminho da pasta
+                var githubBaseUrl = 'https://spulidar.github.io/ql-measurements/';
+                window.open(githubBaseUrl + evento.url, "_blank");
             }
         }
     }
+
 });
 </script>
 
