@@ -1,7 +1,7 @@
 import os
 import re
 
-html_calendario = 'bootstrap year calendar.html' 
+html_calendario = 'ql-measurement-calendar.html' 
 cor_padrao = '#A3E4D7'              
 
 with open(html_calendario, 'r', encoding='utf-8') as f:
@@ -18,7 +18,6 @@ for pasta in os.listdir('.'):
     if os.path.isdir(pasta) and pasta.isdigit() and len(pasta) == 4:
         for arquivo in os.listdir(pasta):
             if arquivo.endswith('_Gallery.html'):
-                # A URL fica limpa: "2024/20240613sant_level1_rcs_Gallery.html"
                 url_relativa = f"{pasta}/{arquivo}"
                 
                 if url_relativa not in urls_existentes:
@@ -29,7 +28,7 @@ for pasta in os.listdir('.'):
                         mes_js = int(match.group(2)) - 1 # JS conta meses de 0 a 11
                         dia = int(match.group(3))
                         
-                        novas_entradas += f"  {{\n    startDate: new Date({ano}, {mes_js}, {dia}),\n    endDate: new Date({ano}, {mes_js}, {dia}),\n    color: '{cor_padrao}',\n    url: '{url_relativa}'\n  }},\n"
+                        novas_entradas += f"  {{\n    startDate: new Date({ano}, {mes_js}, {dia}), endDate: new Date({ano}, {mes_js}, {dia}), color: '{cor_padrao}', url: '{url_relativa}'  }},\n"
                         contador += 1
 
 if contador == 0:
