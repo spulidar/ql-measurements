@@ -1,7 +1,9 @@
 """
-LIdar IMage Publisher - LIMP
-Script para coletar gráficos (.webp), gerar Dashboards HTML planos por ano,
-e atualizar automaticamente o calendário interativo de medidas.
+Lidar IMage Publisher - LIMP
+Script to colect quicklook plots (.webp), generate HTML Dashboards and update 
+interactive calendar for the SPU website https://www.spulidarstation.org/
+
+@author: Luisa Mello, Fábio J. S. Lopes, Izabel Andrade, Amanda Vieira dos Santos
 """
 
 import os
@@ -11,7 +13,7 @@ import re
 from datetime import datetime
 
 # ==========================================
-# CONFIGURAÇÕES GERAIS
+# SETTINGS
 # ==========================================
 INCREMENTAL_PROCESSING = False  
 
@@ -24,7 +26,7 @@ base_data_folder = os.path.join(rootdir_name, files_dir_level1)
 base_site_folder = os.path.join(rootdir_name, site_dir) 
 
 # ==========================================
-# GERAÇÃO DO DASHBOARD HTML
+# HTML DASHBOARD 
 # ==========================================
 def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid_alts, has_global_mean, mean_rcs_file):
     default_ch = valid_channels[0] if valid_channels else ""
@@ -180,73 +182,69 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
 
 
 # ==========================================
-# INTEGRAÇÃO DO CALENDÁRIO
+# CALENDAR UPDATE
 # ==========================================
 def update_calendar():
-    print(f"\n[INFO] LIMP: Sincronizando o calendário ({calendar_file})...")
+    print(f"\n[INFO] LIMP: Syncing ({calendar_file})...")
     
     caminho_calendario = os.path.join(base_site_folder, calendar_file)
     cor_padrao = '#A3E4D7'
     
     if not os.path.exists(caminho_calendario):
-        print(f"  -> [ERRO] O arquivo {calendar_file} não foi encontrado na pasta raiz!")
+        print(f"  -> [ERROR] {calendar_file} file not found")
         return
 
     with open(caminho_calendario, 'r', encoding='utf-8') as f:
         conteudo = f.read()
 
-    # Pega URLs já cadastradas para não duplicar
     urls_existentes = set(re.findall(r"url:\s*'(.*?)'", conteudo))
 
     novas_entradas = ""
     contador = 0
 
-    # Varre a pasta atualiza-site procurando anos (ex: "2024")
     for pasta_ano in os.listdir(base_site_folder):
         caminho_ano = os.path.join(base_site_folder, pasta_ano)
         
         if os.path.isdir(caminho_ano) and pasta_ano.isdigit() and len(pasta_ano) == 4:
             for arquivo in os.listdir(caminho_ano):
-                # Aceita tanto os Dashboards novos quanto as Gallery antigas
                 if arquivo.endswith('_Dashboard.html') or arquivo.endswith('_Gallery.html'):
                     url_relativa = f"{pasta_ano}/{arquivo}"
                     
                     if url_relativa not in urls_existentes:
-                        # Extrai os primeiros 8 números do arquivo (YYYYMMDD)
                         match = re.match(r'^(\d{4})(\d{2})(\d{2})', arquivo)
                         if match:
                             ano = int(match.group(1))
-                            mes_js = int(match.group(2)) - 1 # JS conta meses de 0 a 11
+                            mes_js = int(match.group(2)) - 1 #months from 0 to 11
                             dia = int(match.group(3))
                             
                             novas_entradas += f"  {{\n    startDate: new Date({ano}, {mes_js}, {dia}), endDate: new Date({ano}, {mes_js}, {dia}), color: '{cor_padrao}', url: '{url_relativa}'\n  }},\n"
                             contador += 1
 
     if contador == 0:
-        print("  -> O calendário já está atualizado. Nenhuma nova medida adicionada.")
+        print("  -> Calendar is up to date, no modifications.")
     else:
-        print(f"  -> Inserindo {contador} novas medidas no calendário...")
+        print(f"  -> Inserting {contador} new measurements to the calendar...")
         if "// MARCADOR_AUTOMATICO" in conteudo:
             novo_conteudo = conteudo.replace("// MARCADOR_AUTOMATICO", novas_entradas + "  // MARCADOR_AUTOMATICO")
             with open(caminho_calendario, 'w', encoding='utf-8') as f:
                 f.write(novo_conteudo)
-            print("  -> [OK] Calendário sincronizado com sucesso!")
+            print("  -> [OK] Calendar has been successfully synced!")
         else:
-            print("  -> [ERRO] Faltou colocar o // MARCADOR_AUTOMATICO no seu HTML.")
+            print("  -> [ERROR] No '// MARCADOR_AUTOMATICO' found in the calendar HTML.")
 
 
 # ==========================================
-# ROTINA PRINCIPAL DE PUBLICAÇÃO (O "ASPIRADOR")
+# PROCESSING
 # ==========================================
 def run_limp():
-    print(f"[INFO] LIMP: Iniciando a varredura e publicação HTML...")
+    print(f"[INFO] LIMP: Iniciating...")
     os.makedirs(base_site_folder, exist_ok=True)
     
     search_pattern = os.path.join(base_data_folder, '**', '*.webp')
     all_images = glob.glob(search_pattern, recursive=True)
     
     if not all_images:
-        print(f"[AVISO] Nenhuma imagem '.webp' encontrada em {files_dir_level1}.")
+        print(f"[WARNING] No '.webp' files found in {files_dir_level1}.")
         return
 
     measurements = {}
@@ -298,7 +296,7 @@ def run_limp():
         html_path = os.path.join(site_year_folder, f"{prefix}_Dashboard.html")
 
         if INCREMENTAL_PROCESSING and os.path.exists(html_path):
-            print(f"  -> [PULADO] Dashboard já existe para: {prefix}")
+            print(f"  -> [Skipped] Dashboard exists for: {prefix}")
             continue
             
         for img_path in data['files']:
@@ -317,10 +315,10 @@ def run_limp():
                 data['has_global_mean'], 
                 data['mean_rcs_filename']
             )
-            print(f"  -> [OK] Publicado no site: {prefix}")
+            print(f"  -> [OK]: {prefix}")
             dias_processados += 1
 
-    print(f"\n[INFO] LIMP: Geração HTML finalizada! {dias_processados} novos painéis na pasta '{site_dir}'.")
+    print(f"\n[INFO] LIMP: {dias_processados} new Dashboards in '{site_dir}'.")
     
     # Chama a função de atualização do calendário assim que terminar os HTMLs
     update_calendar()
