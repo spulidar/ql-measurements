@@ -16,12 +16,12 @@ from datetime import datetime
 INCREMENTAL_PROCESSING = True  
 
 rootdir_name = os.getcwd() 
-files_dir_level1 = "05-data_level1"  
-site_dir = "ql-measurements"           
-calendar_file = os.path.join(site_dir, 'ql-measurement-calendar.html')
+files_dir_level1 = "03-data_level1"  
+site_dir = "ql-measurements"          
+calendar_file = "ql-measurement-calendar.html" 
 
 base_data_folder = os.path.join(rootdir_name, files_dir_level1)
-base_site_folder = os.path.join(rootdir_name, site_dir)
+base_site_folder = os.path.join(rootdir_name, site_dir) 
 
 # ==========================================
 # GERAÇÃO DO DASHBOARD HTML
@@ -185,7 +185,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
 def update_calendar():
     print(f"\n[INFO] LIMP: Sincronizando o calendário ({calendar_file})...")
     
-    caminho_calendario = os.path.join(rootdir_name, calendar_file)
+    caminho_calendario = os.path.join(base_site_folder, calendar_file)
     cor_padrao = '#A3E4D7'
     
     if not os.path.exists(caminho_calendario):
