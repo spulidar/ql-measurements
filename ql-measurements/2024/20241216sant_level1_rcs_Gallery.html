@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lidar Measurements Quicklook- 16 Dec 2024 - 21:27 to 16 Dec 2024 - 00:40 UTC</title>
+  <style type="text/css">
+    html, body { background: #f4f4f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; text-align: center; }
+    h2 { color: #333; margin-top: 20px; }
+    
+    /* Container principal do Dashboard */
+    .dashboard { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    
+    /* Estilo das Abas de Controle */
+    .controls { display: flex; justify-content: center; gap: 40px; margin-bottom: 20px; flex-wrap: wrap; }
+    .tab-group { background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .tab-group h3 { margin: 0 0 10px 0; font-size: 16px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    
+    .tab-btn { 
+        background: #e0e0e0; border: none; padding: 10px 20px; margin: 0 5px; 
+        border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; color: #333;
+        transition: background 0.2s, transform 0.1s;
+    }
+    .tab-btn:hover { background: #d0d0d0; transform: translateY(-2px); }
+    .tab-btn.active { background: #0056b3; color: white; box-shadow: 0 4px 8px rgba(0,86,179,0.3); }
+
+    /* Área das Imagens */
+    .image-display { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+    .image-card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); width: 100%; }
+    .image-card img { width: 100%; max-width: 1000px; height: auto; cursor: zoom-in; border-radius: 4px; }
+    
+    /* Modal / Lightbox */
+    #myModal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.85); }
+    .modal-content { margin: auto; display: block; width: 90%; max-width: 1400px; margin-top: 2%; animation: zoom 0.3s ease-in-out; }
+    @keyframes zoom { from {transform:scale(0)} to {transform:scale(1)} }
+  </style>
+</head>
+<body>
+  <h2>Lidar Measurements<br><span style="font-size: 18px; font-weight: normal; color: #666;">16 Dec 2024 - 21:27 to 16 Dec 2024 - 00:40 UTC</span></h2>
+  
+  <div class="dashboard">
+      <div class="controls">
+          <div class="tab-group">
+              <h3>Channel</h3>
+              <button class="tab-btn ch-btn" onclick="setChannel('1064nm_AN', this)">1064nm AN</button>
+<button class="tab-btn ch-btn" onclick="setChannel('532nm_AN', this)">532nm AN</button>
+<button class="tab-btn ch-btn" onclick="setChannel('532nm_PH', this)">532nm PH</button>
+<button class="tab-btn ch-btn" onclick="setChannel('355nm_AN', this)">355nm AN</button>
+<button class="tab-btn ch-btn" onclick="setChannel('355nm_PH', this)">355nm PH</button>
+
+          </div>
+          <div class="tab-group">
+              <h3>Altitude</h3>
+              <button class="tab-btn alt-btn" onclick="setAltitude(5, this)">5 km</button>
+<button class="tab-btn alt-btn" onclick="setAltitude(15, this)">15 km</button>
+<button class="tab-btn alt-btn" onclick="setAltitude(30, this)">30 km</button>
+
+          </div>
+      </div>
+
+      <div class="image-display">
+          <div class="image-card">
+              <img id="quicklook-img" src="Quicklook_20241216sant_level1_rcs_1064nm_AN_5km.webp" onclick="openModal(this.src)" alt="Quicklook Principal">
+          </div>
+          <div class="image-card" style="max-width: 800px;">
+              <img id="meanrcs-img" src="MeanRCS_20241216sant_level1_rcs_5km.webp" onclick="openModal(this.src)" alt="Mean RCS">
+          </div>
+      </div>
+  </div>
+
+  <div id="myModal" onclick="closeModal()">
+    <img class="modal-content" id="img01">
+  </div>
+
+  <script>
+    // Variáveis de Estado
+    var currentChannel = "1064nm_AN";
+    var currentAltitude = "5";
+    var prefix = "20241216sant_level1_rcs";
+
+    // Inicializa a marcação visual dos botões
+    document.addEventListener("DOMContentLoaded", function() {
+        document.querySelector(".ch-btn").classList.add("active");
+        document.querySelector(".alt-btn").classList.add("active");
+    });
+
+    // Atualiza o src das imagens
+    function updateImages() {
+        document.getElementById("quicklook-img").src = "Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
+        document.getElementById("meanrcs-img").src = "MeanRCS_" + prefix + "_" + currentAltitude + "km.webp";
+    }
+
+    // Função de clique no Canal
+    function setChannel(ch, btnElement) {
+        currentChannel = ch;
+        // Remove 'active' de todos os botões de canal e põe no clicado
+        document.querySelectorAll(".ch-btn").forEach(btn => btn.classList.remove("active"));
+        btnElement.classList.add("active");
+        updateImages();
+    }
+
+    // Função de clique na Altitude
+    function setAltitude(alt, btnElement) {
+        currentAltitude = alt;
+        // Remove 'active' de todos os botões de altitude e põe no clicado
+        document.querySelectorAll(".alt-btn").forEach(btn => btn.classList.remove("active"));
+        btnElement.classList.add("active");
+        updateImages();
+    }
+
+    // Funções do Lightbox
+    var modal = document.getElementById("myModal");
+    var modalImg = document.getElementById("img01");
+    function openModal(src) { modal.style.display = "block"; modalImg.src = src; }
+    function closeModal() { modal.style.display = "none"; }
+  </script>
+</body>
+</html>

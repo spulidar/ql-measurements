@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lidar Measurements - 26 May 2020</title>
+  <style type="text/css">
+    html, body { background: #f4f4f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; text-align: center; }
+    h2 { color: #333; margin-top: 20px; }
+    .subtitle { font-size: 18px; font-weight: normal; color: #666; display: block; margin-top: 5px; }
+    .dashboard { max-width: 100%; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+    
+    .main-tabs { margin-bottom: 25px; }
+    .main-tab-btn { background: transparent; border: none; font-size: 18px; font-weight: bold; color: #777; cursor: pointer; padding: 10px 20px; margin: 0 10px; border-bottom: 3px solid transparent; transition: color 0.3s; }
+    .main-tab-btn:hover { color: #0056b3; }
+    .main-tab-btn.active { color: #0056b3; border-bottom: 3px solid #0056b3; }
+    
+    .controls { display: flex; justify-content: center; gap: 40px; margin-bottom: 25px; flex-wrap: wrap; }
+    .tab-group { background: white; padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .tab-group h3 { margin: 0 0 15px 0; font-size: 16px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    .tab-btn { background: #e0e0e0; border: none; padding: 10px 20px; margin: 0 5px; border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; color: #333; transition: background 0.2s, transform 0.1s; }
+    .tab-btn:hover { background: #d0d0d0; transform: translateY(-2px); }
+    .tab-btn.active { background: #0056b3; color: white; box-shadow: 0 4px 8px rgba(0,86,179,0.3); }
+    
+    .image-display { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }
+    
+    /* A CAIXA DA IMAGEM AGORA TEM TRANSIÇÃO SUAVE DE TAMANHO */
+    .image-card { 
+        background: white; padding: 15px; border-radius: 8px; 
+        box-shadow: 0 4px 10px rgba(0,0,0,0.15); 
+        width: 100%; 
+        max-width: 80%; /* Inicia em 80% para o Quicklook */
+        transition: max-width 0.4s ease-in-out; 
+    }
+    .image-card img { width: 100%; height: auto; cursor: zoom-in; border-radius: 4px; display: block; }
+    
+    #myModal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.85); }
+    .modal-content { margin: auto; display: block; width: 95%; max-width: 1600px; margin-top: 2%; animation: zoom 0.3s ease-in-out; }
+    @keyframes zoom { from {transform:scale(0)} to {transform:scale(1)} }
+  </style>
+</head>
+<body>
+  <h2>Lidar Measurements<br><span class="subtitle">26 May 2020</span></h2>
+  
+  <div class="dashboard">
+      <div class="main-tabs">
+          <button class="main-tab-btn active" id="tab-quicklooks" onclick="setMode('quicklooks')">Quicklooks</button>
+          <button class="main-tab-btn" id="tab-resumo" style="display: inline-block;" onclick="setMode('resumo')">Resumo Global</button>
+      </div>
+
+      <div id="controls-panel" class="controls">
+          <div class="tab-group">
+              <h3>CHANNEL</h3>
+              <button class="tab-btn ch-btn" onclick="setChannel('1064nm_AN', this)">1064nm AN</button>
+<button class="tab-btn ch-btn" onclick="setChannel('355nm_AN', this)">355nm AN</button>
+<button class="tab-btn ch-btn" onclick="setChannel('355nm_PC', this)">355nm PC</button>
+<button class="tab-btn ch-btn" onclick="setChannel('532nm_AN', this)">532nm AN</button>
+<button class="tab-btn ch-btn" onclick="setChannel('532nm_PC', this)">532nm PC</button>
+
+          </div>
+          <div class="tab-group">
+              <h3>ALTITUDE</h3>
+              <button class="tab-btn alt-btn" onclick="setAltitude('5', this)">5 km</button>
+<button class="tab-btn alt-btn" onclick="setAltitude('15', this)">15 km</button>
+<button class="tab-btn alt-btn" onclick="setAltitude('30', this)">30 km</button>
+
+          </div>
+      </div>
+
+      <div class="image-display">
+          <div class="image-card" id="img-card">
+              <img id="main-display" src="Quicklook_20200526saam_1064nm_AN_5km.webp" onclick="openModal(this.src)" alt="Lidar Image">
+          </div>
+      </div>
+  </div>
+
+  <div id="myModal" onclick="closeModal()">
+    <img class="modal-content" id="img01">
+  </div>
+
+  <script>
+    var currentChannel = "1064nm_AN";
+    var currentAltitude = "5";
+    var prefix = "20200526saam";
+    var currentMode = "quicklooks";
+
+    document.addEventListener("DOMContentLoaded", function() {
+        var firstCh = document.querySelector(".ch-btn");
+        var firstAlt = document.querySelector(".alt-btn");
+        if(firstCh) firstCh.classList.add("active");
+        if(firstAlt) firstAlt.classList.add("active");
+    });
+
+    function updateImage() {
+        var imgElement = document.getElementById("main-display");
+        if (currentMode === "quicklooks") {
+            imgElement.src = "Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
+        } else {
+            imgElement.src = "GlobalMeanRCS_20200526saam.webp";
+        }
+    }
+
+    function setMode(mode) {
+        currentMode = mode;
+        document.getElementById("tab-quicklooks").classList.remove("active");
+        document.getElementById("tab-resumo").classList.remove("active");
+        
+        var imgCard = document.getElementById("img-card"); // Pega a caixa da imagem
+
+        if (mode === "quicklooks") {
+            document.getElementById("tab-quicklooks").classList.add("active");
+            document.getElementById("controls-panel").style.display = "flex"; 
+            imgCard.style.maxWidth = "80%"; // Define para 80% da tela
+        } else {
+            document.getElementById("tab-resumo").classList.add("active");
+            document.getElementById("controls-panel").style.display = "none"; 
+            imgCard.style.maxWidth = "50%"; // Encolhe para 50% da tela
+        }
+        updateImage();
+    }
+
+    function setChannel(ch, btnElement) {
+        currentChannel = ch;
+        document.querySelectorAll(".ch-btn").forEach(btn => btn.classList.remove("active"));
+        btnElement.classList.add("active");
+        updateImage();
+    }
+
+    function setAltitude(alt, btnElement) {
+        currentAltitude = alt;
+        document.querySelectorAll(".alt-btn").forEach(btn => btn.classList.remove("active"));
+        btnElement.classList.add("active");
+        updateImage();
+    }
+
+    var modal = document.getElementById("myModal");
+    var modalImg = document.getElementById("img01");
+    function openModal(src) { modal.style.display = "block"; modalImg.src = src; }
+    function closeModal() { modal.style.display = "none"; }
+  </script>
+</body>
+</html>

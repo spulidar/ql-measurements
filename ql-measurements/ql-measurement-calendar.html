@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SPU Lidar Station Measurements</title>
+  <link rel="stylesheet" type="text/css" href="https://unpkg.com/js-year-calendar@latest/dist/js-year-calendar.min.css" />
+  <script src="https://unpkg.com/js-year-calendar@latest/dist/js-year-calendar.min.js"></script>
+  
+  <style>  
+    /* Cores das Legendas */
+    .normalmeasurement { background-color:#A3E4D7; }
+    .cirrusmeasurement { background-color:#789ef0; }
+    .turbulencemeasurement { background-color:#F9E79F; }
+    .aeolusmeasurement { background-color:#CCD1D1; }
+    .hungatonga { background-color:#BFA99B; }          
+    .earthcaremeasurement { background-color:#d29af5; }
+
+    /* Estilo do menu de pop-up */
+    .modal-overlay {
+        display: none; 
+        position: fixed; 
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%; height: 100%;
+        background-color: rgba(0,0,0,0.6); 
+        z-index: 9999; 
+        justify-content: center; 
+        align-items: center;
+    }
+    .modal-box {
+        background: #ffffff; 
+        padding: 25px; 
+        border-radius: 10px; 
+        width: 300px; 
+        text-align: center; 
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+        box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+    }
+    .modal-box h3 { margin-top: 0; color: #333; font-size: 18px; margin-bottom: 5px; }
+    .modal-subtitle { font-size: 13px; color: #666; margin-top: 0; margin-bottom: 20px; }
+    .meas-btn {
+        display: block; width: 100%; padding: 12px; margin: 10px 0;
+        background: #17a2b8; color: white; border: none; border-radius: 6px;
+        cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.2s;
+    }
+    .meas-btn:hover { background: #138496; }
+    .close-btn {
+        display: block; width: 100%; padding: 10px; margin-top: 20px;
+        background: #dc3545; color: white; border: none; border-radius: 6px; 
+        cursor: pointer; font-size: 15px; font-weight: bold;
+    }
+    .close-btn:hover { background: #c82333; }
+  </style> 
+</head>
+<body>
+  
+  <div id="calendar"></div>
+
+  <div style="margin-top: 20px; font-family: sans-serif;">
+    <font size="-1"><span class="normalmeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Daily measurement with default setup - 1 minute time period profiles.</font><br>
+    <font size="-1"><span class="cirrusmeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Daily measurement with default setup - 1 minute time period profiles and Cirrus detection.</font><br>
+    <font size="-1"><span class="turbulencemeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Turbulence measurement with 2 second time period profiles.</font><br>
+    <font size="-1"><span class="aeolusmeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;AEOLUS satellite measurement with default setup - 1 minute time period profiles.</font><br>
+    <font size="-1"><span class="hungatonga"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Volcanic layer detection measurement with default setup - 1 minute time period profiles.</font><br>
+    <font size="-1"><span class="earthcaremeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;EarthCare satellite measurement with default setup - 1 minute time period profiles.</font>
+  </div>
+	
+<div id="measurementsModal" class="modal-overlay">
+      <div class="modal-box">
+          <h3 id="modalDateTitle"></h3>
+          <p class="modal-subtitle">Multiple measurements, please choose time period:</p>
+          <div id="modalButtonsContainer"></div>
+          <button class="close-btn" onclick="closeMeasurementsModal()">Cancel</button>
+      </div>
+  </div>
+
+<script>
+	
+var myDataSource = [
+  { startDate: new Date(2024, 7, 12), endDate: new Date(2024, 7, 12), color: '#A3E4D7', url: '2024/20240812saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 23), endDate: new Date(2024, 7, 23), color: '#A3E4D7', url: '2024/20240823saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 19), endDate: new Date(2024, 11, 19), color: '#A3E4D7', url: '2024/20241219saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 21), endDate: new Date(2024, 7, 21), color: '#A3E4D7', url: '2024/20240821sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 15), endDate: new Date(2024, 11, 15), color: '#A3E4D7', url: '2024/20241215saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 2, 14), endDate: new Date(2024, 2, 14), color: '#A3E4D7', url: '2024/20240314sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 5, 11), endDate: new Date(2024, 5, 11), color: '#A3E4D7', url: '2024/20240611sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 1, 7), endDate: new Date(2024, 1, 7), color: '#A3E4D7', url: '2024/20240207saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 7), endDate: new Date(2024, 9, 7), color: '#A3E4D7', url: '2024/20241007saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 2, 14), endDate: new Date(2024, 2, 14), color: '#A3E4D7', url: '2024/20240314saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 1, 6), endDate: new Date(2024, 1, 6), color: '#A3E4D7', url: '2024/20240206sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 5), endDate: new Date(2024, 8, 5), color: '#A3E4D7', url: '2024/20240905saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 25), endDate: new Date(2024, 8, 25), color: '#A3E4D7', url: '2024/20240925saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 11), endDate: new Date(2024, 10, 11), color: '#A3E4D7', url: '2024/20241111saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 3), endDate: new Date(2024, 3, 3), color: '#A3E4D7', url: '2024/20240403sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 2), endDate: new Date(2024, 8, 2), color: '#A3E4D7', url: '2024/20240902saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 8), endDate: new Date(2024, 9, 8), color: '#A3E4D7', url: '2024/20241008saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 5, 20), endDate: new Date(2024, 5, 20), color: '#A3E4D7', url: '2024/20240620sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 9), endDate: new Date(2024, 8, 9), color: '#A3E4D7', url: '2024/20240909saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 23), endDate: new Date(2024, 3, 23), color: '#A3E4D7', url: '2024/20240423sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 4, 7), endDate: new Date(2024, 4, 7), color: '#A3E4D7', url: '2024/20240507saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 4), endDate: new Date(2024, 8, 4), color: '#A3E4D7', url: '2024/20240904saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 1), endDate: new Date(2024, 9, 1), color: '#A3E4D7', url: '2024/20241001saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 12), endDate: new Date(2024, 8, 12), color: '#A3E4D7', url: '2024/20240912sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 10), endDate: new Date(2024, 8, 10), color: '#A3E4D7', url: '2024/20240910sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 13), endDate: new Date(2024, 11, 13), color: '#A3E4D7', url: '2024/20241213sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 20), endDate: new Date(2024, 7, 20), color: '#A3E4D7', url: '2024/20240820saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 4), endDate: new Date(2024, 3, 4), color: '#A3E4D7', url: '2024/20240404sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 2), endDate: new Date(2024, 8, 2), color: '#A3E4D7', url: '2024/20240902sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 24), endDate: new Date(2024, 8, 24), color: '#A3E4D7', url: '2024/20240924saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 2, 15), endDate: new Date(2024, 2, 15), color: '#A3E4D7', url: '2024/20240315saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 16), endDate: new Date(2024, 11, 16), color: '#A3E4D7', url: '2024/20241216sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 4, 22), endDate: new Date(2024, 4, 22), color: '#A3E4D7', url: '2024/20240522saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 20), endDate: new Date(2024, 8, 20), color: '#A3E4D7', url: '2024/20240920saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 25), endDate: new Date(2024, 10, 25), color: '#A3E4D7', url: '2024/20241125saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 27), endDate: new Date(2024, 10, 27), color: '#A3E4D7', url: '2024/20241127saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 12), endDate: new Date(2024, 8, 12), color: '#A3E4D7', url: '2024/20240912saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 6), endDate: new Date(2024, 11, 6), color: '#A3E4D7', url: '2024/20241206saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 17), endDate: new Date(2024, 9, 17), color: '#A3E4D7', url: '2024/20241017saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 27), endDate: new Date(2024, 7, 27), color: '#A3E4D7', url: '2024/20240827saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 19), endDate: new Date(2024, 7, 19), color: '#A3E4D7', url: '2024/20240819saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 4, 7), endDate: new Date(2024, 4, 7), color: '#A3E4D7', url: '2024/20240507sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 31), endDate: new Date(2024, 9, 31), color: '#A3E4D7', url: '2024/20241031saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 18), endDate: new Date(2024, 11, 18), color: '#A3E4D7', url: '2024/20241218saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 1), endDate: new Date(2024, 3, 1), color: '#A3E4D7', url: '2024/20240401sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 15), endDate: new Date(2024, 7, 15), color: '#A3E4D7', url: '2024/20240815saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 8), endDate: new Date(2024, 7, 8), color: '#A3E4D7', url: '2024/20240808saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 26), endDate: new Date(2024, 8, 26), color: '#A3E4D7', url: '2024/20240926saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 2, 31), endDate: new Date(2024, 2, 31), color: '#A3E4D7', url: '2024/20240331sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 18), endDate: new Date(2024, 9, 18), color: '#A3E4D7', url: '2024/20241018saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 26), endDate: new Date(2024, 8, 26), color: '#A3E4D7', url: '2024/20240926sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 5, 13), endDate: new Date(2024, 5, 13), color: '#A3E4D7', url: '2024/20240613sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 5, 6), endDate: new Date(2024, 5, 6), color: '#A3E4D7', url: '2024/20240606sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 27), endDate: new Date(2024, 7, 27), color: '#A3E4D7', url: '2024/20240827sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 21), endDate: new Date(2024, 7, 21), color: '#A3E4D7', url: '2024/20240821saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 22), endDate: new Date(2024, 3, 22), color: '#A3E4D7', url: '2024/20240422sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 30), endDate: new Date(2024, 8, 30), color: '#A3E4D7', url: '2024/20240930saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 13), endDate: new Date(2024, 8, 13), color: '#A3E4D7', url: '2024/20240913saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 11), endDate: new Date(2024, 8, 11), color: '#A3E4D7', url: '2024/20240911sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 15), endDate: new Date(2024, 9, 15), color: '#A3E4D7', url: '2024/20241015sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 19), endDate: new Date(2024, 3, 19), color: '#A3E4D7', url: '2024/20240419saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 13), endDate: new Date(2024, 11, 13), color: '#A3E4D7', url: '2024/20241213saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 23), endDate: new Date(2024, 8, 23), color: '#A3E4D7', url: '2024/20240923sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 15), endDate: new Date(2024, 9, 15), color: '#A3E4D7', url: '2024/20241015saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 2), endDate: new Date(2024, 9, 2), color: '#A3E4D7', url: '2024/20241002saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 25), endDate: new Date(2024, 10, 25), color: '#A3E4D7', url: '2024/20241125sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 22), endDate: new Date(2024, 7, 22), color: '#A3E4D7', url: '2024/20240822saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 6), endDate: new Date(2024, 7, 6), color: '#A3E4D7', url: '2024/20240806saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 4, 6), endDate: new Date(2024, 4, 6), color: '#A3E4D7', url: '2024/20240506sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 19), endDate: new Date(2024, 10, 19), color: '#A3E4D7', url: '2024/20241119sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 28), endDate: new Date(2024, 10, 28), color: '#A3E4D7', url: '2024/20241128saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 11), endDate: new Date(2024, 10, 11), color: '#A3E4D7', url: '2024/20241111sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 5, 10), endDate: new Date(2024, 5, 10), color: '#A3E4D7', url: '2024/20240610sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 30), endDate: new Date(2024, 3, 30), color: '#A3E4D7', url: '2024/20240430sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 8), endDate: new Date(2024, 9, 8), color: '#A3E4D7', url: '2024/20241008sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 4), endDate: new Date(2024, 3, 4), color: '#A3E4D7', url: '2024/20240404sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 10), endDate: new Date(2024, 8, 10), color: '#A3E4D7', url: '2024/20240910saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 1, 22), endDate: new Date(2024, 1, 22), color: '#A3E4D7', url: '2024/20240222saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 3), endDate: new Date(2024, 8, 3), color: '#A3E4D7', url: '2024/20240903saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 30), endDate: new Date(2024, 7, 30), color: '#A3E4D7', url: '2024/20240830saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 16), endDate: new Date(2024, 11, 16), color: '#A3E4D7', url: '2024/20241216saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 19), endDate: new Date(2024, 3, 19), color: '#A3E4D7', url: '2024/20240419sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 3, 5), endDate: new Date(2024, 3, 5), color: '#A3E4D7', url: '2024/20240405sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 1), endDate: new Date(2024, 9, 1), color: '#A3E4D7', url: '2024/20241001sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 13), endDate: new Date(2024, 8, 13), color: '#A3E4D7', url: '2024/20240913sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 1), endDate: new Date(2024, 8, 1), color: '#A3E4D7', url: '2024/20240901sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 12), endDate: new Date(2024, 10, 12), color: '#A3E4D7', url: '2024/20241112saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 26), endDate: new Date(2024, 10, 26), color: '#A3E4D7', url: '2024/20241126sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 12), endDate: new Date(2024, 11, 12), color: '#A3E4D7', url: '2024/20241212saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 28), endDate: new Date(2024, 7, 28), color: '#A3E4D7', url: '2024/20240828saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 19), endDate: new Date(2024, 11, 19), color: '#A3E4D7', url: '2024/20241219sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 19), endDate: new Date(2024, 7, 19), color: '#A3E4D7', url: '2024/20240819sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 4, 8), endDate: new Date(2024, 4, 8), color: '#A3E4D7', url: '2024/20240508sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 9), endDate: new Date(2024, 11, 9), color: '#A3E4D7', url: '2024/20241209saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 7), endDate: new Date(2024, 7, 7), color: '#A3E4D7', url: '2024/20240807saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 26), endDate: new Date(2024, 7, 26), color: '#A3E4D7', url: '2024/20240826sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 1, 21), endDate: new Date(2024, 1, 21), color: '#A3E4D7', url: '2024/20240221saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 22), endDate: new Date(2024, 8, 22), color: '#A3E4D7', url: '2024/20240922saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 1, 23), endDate: new Date(2024, 1, 23), color: '#A3E4D7', url: '2024/20240223saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 23), endDate: new Date(2024, 8, 23), color: '#A3E4D7', url: '2024/20240923saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 31), endDate: new Date(2024, 9, 31), color: '#A3E4D7', url: '2024/20241031sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 2, 15), endDate: new Date(2024, 2, 15), color: '#A3E4D7', url: '2024/20240315sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 15), endDate: new Date(2024, 7, 15), color: '#A3E4D7', url: '2024/20240815sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 11), endDate: new Date(2024, 8, 11), color: '#A3E4D7', url: '2024/20240911saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 26), endDate: new Date(2024, 7, 26), color: '#A3E4D7', url: '2024/20240826saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 2, 12), endDate: new Date(2024, 2, 12), color: '#A3E4D7', url: '2024/20240312saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 2), endDate: new Date(2024, 11, 2), color: '#A3E4D7', url: '2024/20241202saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 16), endDate: new Date(2024, 7, 16), color: '#A3E4D7', url: '2024/20240816sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 1), endDate: new Date(2024, 10, 1), color: '#A3E4D7', url: '2024/20241101saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 29), endDate: new Date(2024, 7, 29), color: '#A3E4D7', url: '2024/20240829saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 7, 22), endDate: new Date(2024, 7, 22), color: '#A3E4D7', url: '2024/20240822sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 9, 2), endDate: new Date(2024, 9, 2), color: '#A3E4D7', url: '2024/20241002sapm_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 26), endDate: new Date(2024, 10, 26), color: '#A3E4D7', url: '2024/20241126saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 10, 19), endDate: new Date(2024, 10, 19), color: '#A3E4D7', url: '2024/20241119saam_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 8, 3), endDate: new Date(2024, 8, 3), color: '#A3E4D7', url: '2024/20240903sant_level1_rcs_Gallery.html' },
+  { startDate: new Date(2024, 11, 19), endDate: new Date(2024, 11, 19), color: '#A3E4D7', url: '2024/20241219sant_level1_rcs_Gallery.html' },
+    {
+    startDate: new Date(2020, 2, 9), endDate: new Date(2020, 2, 9), color: '#A3E4D7', url: '2020/20200309saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 28), endDate: new Date(2020, 3, 28), color: '#A3E4D7', url: '2020/20200428saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 7), endDate: new Date(2020, 0, 7), color: '#A3E4D7', url: '2020/20200107saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 2), endDate: new Date(2020, 2, 2), color: '#A3E4D7', url: '2020/20200302sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 4), endDate: new Date(2020, 2, 4), color: '#A3E4D7', url: '2020/20200304saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 11, 4), endDate: new Date(2020, 11, 4), color: '#A3E4D7', url: '2020/20201204saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 5), endDate: new Date(2020, 4, 5), color: '#A3E4D7', url: '2020/20200505sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 15), endDate: new Date(2020, 2, 15), color: '#A3E4D7', url: '2020/20200315saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 21), endDate: new Date(2020, 0, 21), color: '#A3E4D7', url: '2020/20200121saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 26), endDate: new Date(2020, 8, 26), color: '#A3E4D7', url: '2020/20200926sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 9), endDate: new Date(2020, 7, 9), color: '#A3E4D7', url: '2020/20200809saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 18), endDate: new Date(2020, 1, 18), color: '#A3E4D7', url: '2020/20200218sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 24), endDate: new Date(2020, 7, 24), color: '#A3E4D7', url: '2020/20200824saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 16), endDate: new Date(2020, 0, 16), color: '#A3E4D7', url: '2020/20200116saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 16), endDate: new Date(2020, 1, 16), color: '#A3E4D7', url: '2020/20200216saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 17), endDate: new Date(2020, 4, 17), color: '#A3E4D7', url: '2020/20200517sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 16), endDate: new Date(2020, 2, 16), color: '#A3E4D7', url: '2020/20200316saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 11), endDate: new Date(2020, 0, 11), color: '#A3E4D7', url: '2020/20200111sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 26), endDate: new Date(2020, 3, 26), color: '#A3E4D7', url: '2020/20200426sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 15), endDate: new Date(2020, 2, 15), color: '#A3E4D7', url: '2020/20200315sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 10), endDate: new Date(2020, 2, 10), color: '#A3E4D7', url: '2020/20200310saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 19), endDate: new Date(2020, 1, 19), color: '#A3E4D7', url: '2020/20200219saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 10, 27), endDate: new Date(2020, 10, 27), color: '#A3E4D7', url: '2020/20201127sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 30), endDate: new Date(2020, 0, 30), color: '#A3E4D7', url: '2020/20200130saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 24), endDate: new Date(2020, 2, 24), color: '#A3E4D7', url: '2020/20200324sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 19), endDate: new Date(2020, 4, 19), color: '#A3E4D7', url: '2020/20200519sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 26), endDate: new Date(2020, 4, 26), color: '#A3E4D7', url: '2020/20200526saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 24), endDate: new Date(2020, 3, 24), color: '#A3E4D7', url: '2020/20200424saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 26), endDate: new Date(2020, 0, 26), color: '#A3E4D7', url: '2020/20200126sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 10), endDate: new Date(2020, 4, 10), color: '#A3E4D7', url: '2020/20200510saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 26), endDate: new Date(2020, 3, 26), color: '#A3E4D7', url: '2020/20200426saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 5), endDate: new Date(2020, 4, 5), color: '#A3E4D7', url: '2020/20200505sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 26), endDate: new Date(2020, 0, 26), color: '#A3E4D7', url: '2020/20200126saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 18), endDate: new Date(2020, 1, 18), color: '#A3E4D7', url: '2020/20200218saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 10), endDate: new Date(2020, 7, 10), color: '#A3E4D7', url: '2020/20200810sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 13), endDate: new Date(2020, 2, 13), color: '#A3E4D7', url: '2020/20200313sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 12), endDate: new Date(2020, 6, 12), color: '#A3E4D7', url: '2020/20200712saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 13), endDate: new Date(2020, 2, 13), color: '#A3E4D7', url: '2020/20200313saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 17), endDate: new Date(2020, 4, 17), color: '#A3E4D7', url: '2020/20200517sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 12), endDate: new Date(2020, 2, 12), color: '#A3E4D7', url: '2020/20200312sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 5, 19), endDate: new Date(2020, 5, 19), color: '#A3E4D7', url: '2020/20200619sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 6), endDate: new Date(2020, 2, 6), color: '#A3E4D7', url: '2020/20200306sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 26), endDate: new Date(2020, 3, 26), color: '#A3E4D7', url: '2020/20200426sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 26), endDate: new Date(2020, 4, 26), color: '#A3E4D7', url: '2020/20200526sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 15), endDate: new Date(2020, 0, 15), color: '#A3E4D7', url: '2020/20200115sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 13), endDate: new Date(2020, 8, 13), color: '#A3E4D7', url: '2020/20200913saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 15), endDate: new Date(2020, 1, 15), color: '#A3E4D7', url: '2020/20200215sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 25), endDate: new Date(2020, 0, 25), color: '#A3E4D7', url: '2020/20200125sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 3), endDate: new Date(2020, 7, 3), color: '#A3E4D7', url: '2020/20200803saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 17), endDate: new Date(2020, 4, 17), color: '#A3E4D7', url: '2020/20200517saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 9, 19), endDate: new Date(2020, 9, 19), color: '#A3E4D7', url: '2020/20201019sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 29), endDate: new Date(2020, 0, 29), color: '#A3E4D7', url: '2020/20200129saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 31), endDate: new Date(2020, 4, 31), color: '#A3E4D7', url: '2020/20200531sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 30), endDate: new Date(2020, 7, 30), color: '#A3E4D7', url: '2020/20200830sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 17), endDate: new Date(2020, 8, 17), color: '#A3E4D7', url: '2020/20200917saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 8), endDate: new Date(2020, 6, 8), color: '#A3E4D7', url: '2020/20200708saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 28), endDate: new Date(2020, 3, 28), color: '#A3E4D7', url: '2020/20200428sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 19), endDate: new Date(2020, 8, 19), color: '#A3E4D7', url: '2020/20200919sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 30), endDate: new Date(2020, 7, 30), color: '#A3E4D7', url: '2020/20200830sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 11), endDate: new Date(2020, 6, 11), color: '#A3E4D7', url: '2020/20200711sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 14), endDate: new Date(2020, 8, 14), color: '#A3E4D7', url: '2020/20200914sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 10), endDate: new Date(2020, 2, 10), color: '#A3E4D7', url: '2020/20200310sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 16), endDate: new Date(2020, 2, 16), color: '#A3E4D7', url: '2020/20200316sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 10), endDate: new Date(2020, 4, 10), color: '#A3E4D7', url: '2020/20200510sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 5), endDate: new Date(2020, 4, 5), color: '#A3E4D7', url: '2020/20200505saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 19), endDate: new Date(2020, 8, 19), color: '#A3E4D7', url: '2020/20200919saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 21), endDate: new Date(2020, 6, 21), color: '#A3E4D7', url: '2020/20200721sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 15), endDate: new Date(2020, 0, 15), color: '#A3E4D7', url: '2020/20200115saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 12), endDate: new Date(2020, 7, 12), color: '#A3E4D7', url: '2020/20200812sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 24), endDate: new Date(2020, 7, 24), color: '#A3E4D7', url: '2020/20200824sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 21), endDate: new Date(2020, 6, 21), color: '#A3E4D7', url: '2020/20200721sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 25), endDate: new Date(2020, 8, 25), color: '#A3E4D7', url: '2020/20200925sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 16), endDate: new Date(2020, 8, 16), color: '#A3E4D7', url: '2020/20200916saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 5, 21), endDate: new Date(2020, 5, 21), color: '#A3E4D7', url: '2020/20200621sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 26), endDate: new Date(2020, 0, 26), color: '#A3E4D7', url: '2020/20200126sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 12), endDate: new Date(2020, 7, 12), color: '#A3E4D7', url: '2020/20200812saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 26), endDate: new Date(2020, 8, 26), color: '#A3E4D7', url: '2020/20200926saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 10), endDate: new Date(2020, 2, 10), color: '#A3E4D7', url: '2020/20200310sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 17), endDate: new Date(2020, 2, 17), color: '#A3E4D7', url: '2020/20200317sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 5, 21), endDate: new Date(2020, 5, 21), color: '#A3E4D7', url: '2020/20200621saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 14), endDate: new Date(2020, 8, 14), color: '#A3E4D7', url: '2020/20200914saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 12), endDate: new Date(2020, 2, 12), color: '#A3E4D7', url: '2020/20200312saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 12), endDate: new Date(2020, 6, 12), color: '#A3E4D7', url: '2020/20200712sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 7), endDate: new Date(2020, 1, 7), color: '#A3E4D7', url: '2020/20200207saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 6), endDate: new Date(2020, 2, 6), color: '#A3E4D7', url: '2020/20200306saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 17), endDate: new Date(2020, 2, 17), color: '#A3E4D7', url: '2020/20200317saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 14), endDate: new Date(2020, 8, 14), color: '#A3E4D7', url: '2020/20200914sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 25), endDate: new Date(2020, 8, 25), color: '#A3E4D7', url: '2020/20200925sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 9), endDate: new Date(2020, 7, 9), color: '#A3E4D7', url: '2020/20200809sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 13), endDate: new Date(2020, 8, 13), color: '#A3E4D7', url: '2020/20200913sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 19), endDate: new Date(2020, 4, 19), color: '#A3E4D7', url: '2020/20200519sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 18), endDate: new Date(2020, 8, 18), color: '#A3E4D7', url: '2020/20200918sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 16), endDate: new Date(2020, 8, 16), color: '#A3E4D7', url: '2020/20200916sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 17), endDate: new Date(2020, 8, 17), color: '#A3E4D7', url: '2020/20200917sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 9), endDate: new Date(2020, 2, 9), color: '#A3E4D7', url: '2020/20200309sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 9, 2), endDate: new Date(2020, 9, 2), color: '#A3E4D7', url: '2020/20201002saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 5, 21), endDate: new Date(2020, 5, 21), color: '#A3E4D7', url: '2020/20200621sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 6), endDate: new Date(2020, 2, 6), color: '#A3E4D7', url: '2020/20200306sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 14), endDate: new Date(2020, 1, 14), color: '#A3E4D7', url: '2020/20200214saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 31), endDate: new Date(2020, 4, 31), color: '#A3E4D7', url: '2020/20200531saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 13), endDate: new Date(2020, 8, 13), color: '#A3E4D7', url: '2020/20200913sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 3, 24), endDate: new Date(2020, 3, 24), color: '#A3E4D7', url: '2020/20200424sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 25), endDate: new Date(2020, 8, 25), color: '#A3E4D7', url: '2020/20200925saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 12), endDate: new Date(2020, 7, 12), color: '#A3E4D7', url: '2020/20200812sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 12), endDate: new Date(2020, 2, 12), color: '#A3E4D7', url: '2020/20200312sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 26), endDate: new Date(2020, 8, 26), color: '#A3E4D7', url: '2020/20200926sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 10), endDate: new Date(2020, 7, 10), color: '#A3E4D7', url: '2020/20200810saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 9, 2), endDate: new Date(2020, 9, 2), color: '#A3E4D7', url: '2020/20201002sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 14), endDate: new Date(2020, 2, 14), color: '#A3E4D7', url: '2020/20200314sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 20), endDate: new Date(2020, 1, 20), color: '#A3E4D7', url: '2020/20200220saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 5), endDate: new Date(2020, 2, 5), color: '#A3E4D7', url: '2020/20200305saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 19), endDate: new Date(2020, 4, 19), color: '#A3E4D7', url: '2020/20200519saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 8, 17), endDate: new Date(2020, 8, 17), color: '#A3E4D7', url: '2020/20200917sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 24), endDate: new Date(2020, 7, 24), color: '#A3E4D7', url: '2020/20200824sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 4, 10), endDate: new Date(2020, 4, 10), color: '#A3E4D7', url: '2020/20200510sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 3), endDate: new Date(2020, 7, 3), color: '#A3E4D7', url: '2020/20200803sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 21), endDate: new Date(2020, 6, 21), color: '#A3E4D7', url: '2020/20200721saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 2, 24), endDate: new Date(2020, 2, 24), color: '#A3E4D7', url: '2020/20200324saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 6, 8), endDate: new Date(2020, 6, 8), color: '#A3E4D7', url: '2020/20200708sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 21), endDate: new Date(2020, 0, 21), color: '#A3E4D7', url: '2020/20200121sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 0, 15), endDate: new Date(2020, 0, 15), color: '#A3E4D7', url: '2020/20200115sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 10), endDate: new Date(2020, 7, 10), color: '#A3E4D7', url: '2020/20200810sant_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 9, 2), endDate: new Date(2020, 9, 2), color: '#A3E4D7', url: '2020/20201002sapm_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 7, 30), endDate: new Date(2020, 7, 30), color: '#A3E4D7', url: '2020/20200830saam_Dashboard.html'
+  },
+  {
+    startDate: new Date(2020, 1, 17), endDate: new Date(2020, 1, 17), color: '#A3E4D7', url: '2020/20200217saam_Dashboard.html'
+  },
+  // MARCADOR_AUTOMATICO
+];
+
+var diasComMedida = {};
+myDataSource.forEach(function(evento) {
+    var diaAtual = new Date(evento.startDate);
+    var dataFim = new Date(evento.endDate);
+    diaAtual.setHours(0,0,0,0);
+    dataFim.setHours(23,59,59,999);
+    
+    while(diaAtual <= dataFim) {
+        var dataFormatada = diaAtual.getFullYear() + '-' + diaAtual.getMonth() + '-' + diaAtual.getDate();
+        diasComMedida[dataFormatada] = true;
+        diaAtual.setDate(diaAtual.getDate() + 1); 
+    }
+});
+
+new Calendar('#calendar', {
+    minDate: new Date('01/01/2017'),
+    maxDate: new Date('12/31/2026'),
+    style: 'background',
+    dataSource: myDataSource,
+    
+    customDayRenderer: function(element, date) {
+        var dataFormatada = date.getFullYear() + '-' + date.getMonth() + '-' + date.getDate();
+        
+        if (!diasComMedida[dataFormatada]) {
+            element.style.color = '#d3d3d3'; 
+            element.style.cursor = 'default';
+        } else {
+            element.style.cursor = 'pointer';
+            element.style.fontWeight = 'bold';
+            element.style.color = '#333333';
+        }
+    },
+    
+    clickDay: function(e) {
+        if(e.events.length > 0) {
+            var githubBaseUrl = 'https://spulidar.github.io/ql-measurements/';
+            
+            // Se tiver só  uma medida, abre direto
+            if (e.events.length === 1) {
+                window.open(githubBaseUrl + e.events[0].url, "_blank");
+            } 
+            // Se tiver mais, abre o menu pop-up
+            else {
+                var container = document.getElementById('modalButtonsContainer');
+                container.innerHTML = ''; // Limpa botões do clique anterior
+
+                // Formata a data para o título (ex: 13/02/2025)
+                var dataFormatada = e.date.toLocaleDateString('pt-BR');
+                document.getElementById('modalDateTitle').innerText = dataFormatada;
+
+                // Cria um botão para cada medida encontrada naquele dia
+                e.events.forEach(function(evento) {
+                    var url = evento.url;
+                    var periodo = "other";
+                    
+                    if (url.includes("saam")) periodo = "Morning";
+                    if (url.includes("sapm")) periodo = "Afternoon";
+                    if (url.includes("sant")) periodo = "Night";
+
+                    var btn = document.createElement('button');
+                    btn.className = 'meas-btn';
+                    btn.innerText = periodo;
+                    btn.onclick = function() {
+                        window.open(githubBaseUrl + url, "_blank"); 
+                        closeMeasurementsModal(); 
+                    };
+                    container.appendChild(btn);
+                });
+
+                // Exibe o menu na tela por cima de tudo
+                document.getElementById('measurementsModal').style.display = 'flex';
+            }
+        }
+    }
+});
+
+// Função para fechar o menu no botão Cancelar
+function closeMeasurementsModal() {
+    document.getElementById('measurementsModal').style.display = 'none';
+}
+</script>
+
+</body>
+</html>
