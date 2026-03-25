@@ -87,7 +87,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
   <div class="dashboard">
       <div class="main-tabs">
           <button class="main-tab-btn active" id="tab-quicklooks" onclick="setMode('quicklooks')">Quicklooks</button>
-          <button class="main-tab-btn" id="tab-resumo" style="{global_tab_style}" onclick="setMode('resumo')">Resumo Global</button>
+          <button class="main-tab-btn" id="tab-resumo" style="{global_tab_style}" onclick="setMode('resumo')">Mean RCS</button>
       </div>
 
       <div id="controls-panel" class="controls">
