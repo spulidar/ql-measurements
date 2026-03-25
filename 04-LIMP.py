@@ -217,7 +217,7 @@ def update_calendar():
                             mes_js = int(match.group(2)) - 1 #months from 0 to 11
                             dia = int(match.group(3))
                             
-                            novas_entradas += f"  {{\n    startDate: new Date({ano}, {mes_js}, {dia}), endDate: new Date({ano}, {mes_js}, {dia}), color: '{cor_padrao}', url: '{url_relativa}'\n  }},\n"
+                            novas_entradas += f"  {{startDate: new Date({ano}, {mes_js}, {dia}), endDate: new Date({ano}, {mes_js}, {dia}), color: '{cor_padrao}', url: '{url_relativa}'}},\n"
                             contador += 1
 
     if contador == 0:
