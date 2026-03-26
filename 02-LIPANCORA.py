@@ -6,8 +6,9 @@ Background StdDev) to output Level 1 data (Corrected Lidar Data and RCS).
 
 Corrections & Error Propagation:
     - Deadtime correction (Derivative propagation)
+    - Dark Current subtraction (Quadrature sum)
     - Bin-shift correction (Spatial array shift)
-    - Background calculation and subtraction (Quadrature sum)
+    - Sky Background calculation and subtraction (Quadrature sum)
     - Range corrected signal (Geometric scaling)
     - Real-time Signal-to-Noise Ratio (SNR) Sanity Checks
 
@@ -166,11 +167,25 @@ def process_single_file(nc_path):
                 bg_std = sig.where(bg_mask).std(dim="range")
                 err_dt = xr.ones_like(sig) * bg_std # Broadcast across altitude
 
+            # --- 2.5 Dark Current Subtraction ---
+            if "Background_Profile" in ds:
+                dc_data = ds["Background_Profile"].isel(channel=ch_i)
+                if "time_bck" in dc_data.dims:
+                    dc_prof = dc_data.mean(dim="time_bck")
+                    n_bck = ds.sizes.get("time_bck", 1)
+                    dc_err = dc_data.std(dim="time_bck") / np.sqrt(n_bck) if n_bck > 1 else xr.zeros_like(dc_prof)
+                else:
+                    dc_prof = dc_data
+                    dc_err = xr.zeros_like(dc_prof)
+                
+                sig_dt = sig_dt - dc_prof
+                err_dt = np.sqrt(err_dt**2 + dc_err**2)
+
             # --- 3. Bin Shift ---
             sig_shift = sig_dt.shift(range=shift, fill_value=np.nan)
             err_shift = err_dt.shift(range=shift, fill_value=np.nan)
 
-            # --- 4. Background Subtraction ---
+            # --- 4. Sky Background Subtraction ---
             bg_mean = sig_shift.where(bg_mask).mean(dim="range") - bg_offset
             bg_std_shift = sig_shift.where(bg_mask).std(dim="range")
             N_bg_bins = bg_mask.sum().values
@@ -221,7 +236,7 @@ def process_single_file(nc_path):
 
         attrs_common = dict(ds.attrs)
 
-        attrs_common["processing_level"] = "Level 1: PC->MHz, Deadtime, Bin-Shift, Background, Error Propagation"
+        attrs_common["processing_level"] = "Level 1: PC->MHz, Deadtime, Dark Current, Bin-Shift, Sky Background, Error Propagation"
         attrs_common["history"] = f"{ds.attrs.get('history', '')}\nProcessed with LIPANCORA on {datetime.now(timezone.utc).isoformat()} UTC"
 
         # Construct final datasets
