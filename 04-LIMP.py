@@ -1,34 +1,59 @@
 """
-Lidar IMage Publisher - LIMP
-Script to colect quicklook plots (.webp), generate HTML Dashboards and update 
-interactive calendar for the SPU website https://www.spulidarstation.org/
-
-@author: Luisa Mello, Fábio J. S. Lopes, Izabel Andrade, Amanda Vieira dos Santos
+LIdar IMage Publisher - LIMP (Cloudflare R2 Integrated)
+Script to collect graphics (.webp), upload them to Cloudflare R2 Bucket,
+generate flat HTML Dashboards per year pointing to the cloud CDN,
+and automatically update the interactive measurement calendar.
 """
 
 import os
 import glob
-import shutil
 import re
+import boto3
 from datetime import datetime
 
+# Import the credentials from our safe local file
+try:
+    import credentials
+except ImportError:
+    print("[ERROR] 'credentials.py' not found! Please create it with your R2 keys.")
+    exit()
+
 # ==========================================
-# SETTINGS
+# GENERAL SETTINGS
 # ==========================================
-INCREMENTAL_PROCESSING = False  
+INCREMENTAL_PROCESSING = True  
 
 rootdir_name = os.getcwd() 
-files_dir_level1 = "05-data_level1"  
-site_dir = "ql-measurements"          
+files_dir_level1 = "05-data_level1" # Or wherever your .webp are generated 
+site_dir = "ql-measurements"           
 calendar_file = "ql-measurement-calendar.html" 
 
 base_data_folder = os.path.join(rootdir_name, files_dir_level1)
-base_site_folder = os.path.join(rootdir_name, site_dir) 
+base_site_folder = os.path.join(rootdir_name, site_dir)
 
 # ==========================================
-# HTML DASHBOARD 
+# CLOUDFLARE R2 SETUP
 # ==========================================
-def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid_alts, has_global_mean, mean_rcs_file):
+s3_client = boto3.client('s3',
+    endpoint_url=credentials.R2_ENDPOINT,
+    aws_access_key_id=credentials.R2_ACCESS_KEY,
+    aws_secret_access_key=credentials.R2_SECRET_KEY,
+    region_name='auto' 
+)
+
+def upload_to_r2(local_file_path, cloud_file_key):
+    """Uploads a single file to the Cloudflare R2 Bucket."""
+    try:
+        s3_client.upload_file(local_file_path, credentials.R2_BUCKET_NAME, cloud_file_key)
+        return True
+    except Exception as e:
+        print(f"  -> [R2 UPLOAD ERROR] Failed to upload {local_file_path}: {e}")
+        return False
+
+# ==========================================
+# HTML DASHBOARD GENERATOR
+# ==========================================
+def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid_alts, has_global_mean, mean_rcs_file, year):
     default_ch = valid_channels[0] if valid_channels else ""
     default_alt = valid_alts[0] if valid_alts else ""
     
@@ -42,6 +67,9 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
         altitude_buttons += f'<button class="tab-btn alt-btn" onclick="setAltitude(\'{alt}\', this)">{alt} km</button>\n'
 
     global_tab_style = "display: inline-block;" if has_global_mean else "display: none;"
+
+    # The base URL pointing to the specific year folder in the cloud
+    cloud_base_url = f"{credentials.R2_PUBLIC_URL}/{year}"
 
     html_content = f"""<!doctype html>
 <html lang="en">
@@ -67,15 +95,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     .tab-btn.active {{ background: #0056b3; color: white; box-shadow: 0 4px 8px rgba(0,86,179,0.3); }}
     
     .image-display {{ display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }}
-    
-    /* A CAIXA DA IMAGEM AGORA TEM TRANSIÇÃO SUAVE DE TAMANHO */
-    .image-card {{ 
-        background: white; padding: 15px; border-radius: 8px; 
-        box-shadow: 0 4px 10px rgba(0,0,0,0.15); 
-        width: 100%; 
-        max-width: 80%; /* Inicia em 80% para o Quicklook */
-        transition: max-width 0.4s ease-in-out; 
-    }}
+    .image-card {{ background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); width: 100%; max-width: 80%; transition: max-width 0.4s ease-in-out; }}
     .image-card img {{ width: 100%; height: auto; cursor: zoom-in; border-radius: 4px; display: block; }}
     
     #myModal {{ display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.85); }}
@@ -89,23 +109,17 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
   <div class="dashboard">
       <div class="main-tabs">
           <button class="main-tab-btn active" id="tab-quicklooks" onclick="setMode('quicklooks')">Quicklooks</button>
-          <button class="main-tab-btn" id="tab-resumo" style="{global_tab_style}" onclick="setMode('resumo')">Mean RCS</button>
+          <button class="main-tab-btn" id="tab-resumo" style="{global_tab_style}" onclick="setMode('resumo')">Global Summary</button>
       </div>
 
       <div id="controls-panel" class="controls">
-          <div class="tab-group">
-              <h3>CHANNEL</h3>
-              {channel_buttons}
-          </div>
-          <div class="tab-group">
-              <h3>ALTITUDE</h3>
-              {altitude_buttons}
-          </div>
+          <div class="tab-group"><h3>CHANNEL</h3>{channel_buttons}</div>
+          <div class="tab-group"><h3>ALTITUDE</h3>{altitude_buttons}</div>
       </div>
 
       <div class="image-display">
           <div class="image-card" id="img-card">
-              <img id="main-display" src="Quicklook_{prefix}_{default_ch}_{default_alt}km.webp" onclick="openModal(this.src)" alt="Lidar Image">
+              <img id="main-display" src="{cloud_base_url}/Quicklook_{prefix}_{default_ch}_{default_alt}km.webp" onclick="openModal(this.src)" alt="Lidar Image">
           </div>
       </div>
   </div>
@@ -119,6 +133,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     var currentAltitude = "{default_alt}";
     var prefix = "{prefix}";
     var currentMode = "quicklooks";
+    var cloudBaseUrl = "{cloud_base_url}";
 
     document.addEventListener("DOMContentLoaded", function() {{
         var firstCh = document.querySelector(".ch-btn");
@@ -130,9 +145,9 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     function updateImage() {{
         var imgElement = document.getElementById("main-display");
         if (currentMode === "quicklooks") {{
-            imgElement.src = "Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
+            imgElement.src = cloudBaseUrl + "/Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
         }} else {{
-            imgElement.src = "{mean_rcs_file}";
+            imgElement.src = cloudBaseUrl + "/{mean_rcs_file}";
         }}
     }}
 
@@ -141,16 +156,16 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
         document.getElementById("tab-quicklooks").classList.remove("active");
         document.getElementById("tab-resumo").classList.remove("active");
         
-        var imgCard = document.getElementById("img-card"); // Pega a caixa da imagem
+        var imgCard = document.getElementById("img-card");
 
         if (mode === "quicklooks") {{
             document.getElementById("tab-quicklooks").classList.add("active");
             document.getElementById("controls-panel").style.display = "flex"; 
-            imgCard.style.maxWidth = "80%"; // Define para 80% da tela
+            imgCard.style.maxWidth = "80%"; 
         }} else {{
             document.getElementById("tab-resumo").classList.add("active");
             document.getElementById("controls-panel").style.display = "none"; 
-            imgCard.style.maxWidth = "50%"; // Encolhe para 50% da tela
+            imgCard.style.maxWidth = "50%"; 
         }}
         updateImage();
     }}
@@ -182,23 +197,22 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
 
 
 # ==========================================
-# CALENDAR UPDATE
+# CALENDAR INTEGRATION
 # ==========================================
 def update_calendar():
-    print(f"\n[INFO] LIMP: Syncing ({calendar_file})...")
+    print(f"\n[INFO] LIMP: Syncing interactive calendar ({calendar_file})...")
     
     caminho_calendario = os.path.join(base_site_folder, calendar_file)
     cor_padrao = '#A3E4D7'
     
     if not os.path.exists(caminho_calendario):
-        print(f"  -> [ERROR] {calendar_file} file not found")
+        print(f"  -> [ERROR] Calendar file {calendar_file} not found in {base_site_folder}!")
         return
 
     with open(caminho_calendario, 'r', encoding='utf-8') as f:
         conteudo = f.read()
 
     urls_existentes = set(re.findall(r"url:\s*'(.*?)'", conteudo))
-
     novas_entradas = ""
     contador = 0
 
@@ -214,37 +228,36 @@ def update_calendar():
                         match = re.match(r'^(\d{4})(\d{2})(\d{2})', arquivo)
                         if match:
                             ano = int(match.group(1))
-                            mes_js = int(match.group(2)) - 1 #months from 0 to 11
+                            mes_js = int(match.group(2)) - 1 
                             dia = int(match.group(3))
                             
-                            novas_entradas += f"  {{startDate: new Date({ano}, {mes_js}, {dia}), endDate: new Date({ano}, {mes_js}, {dia}), color: '{cor_padrao}', url: '{url_relativa}'}},\n"
+                            novas_entradas += f"  {{\n    startDate: new Date({ano}, {mes_js}, {dia}), endDate: new Date({ano}, {mes_js}, {dia}), color: '{cor_padrao}', url: '{url_relativa}'\n  }},\n"
                             contador += 1
 
     if contador == 0:
-        print("  -> Calendar is up to date, no modifications.")
+        print("  -> Calendar is up to date. No new measurements found.")
     else:
-        print(f"  -> Inserting {contador} new measurements to the calendar...")
+        print(f"  -> Inserting {contador} new measurements into the calendar...")
         if "// MARCADOR_AUTOMATICO" in conteudo:
             novo_conteudo = conteudo.replace("// MARCADOR_AUTOMATICO", novas_entradas + "  // MARCADOR_AUTOMATICO")
             with open(caminho_calendario, 'w', encoding='utf-8') as f:
                 f.write(novo_conteudo)
-            print("  -> [OK] Calendar has been successfully synced!")
+            print("  -> [OK] Calendar successfully synced!")
         else:
-            print("  -> [ERROR] No '// MARCADOR_AUTOMATICO' found in the calendar HTML.")
-
+            print("  -> [ERROR] Missing '// MARCADOR_AUTOMATICO' tag in your HTML.")
 
 # ==========================================
-# PROCESSING
+# MAIN ROUTINE (THE "VACUUM")
 # ==========================================
 def run_limp():
-    print(f"[INFO] LIMP: Iniciating...")
+    print(f"[INFO] LIMP: Starting HTML generation and Cloudflare R2 Uploads...")
     os.makedirs(base_site_folder, exist_ok=True)
     
     search_pattern = os.path.join(base_data_folder, '**', '*.webp')
     all_images = glob.glob(search_pattern, recursive=True)
     
     if not all_images:
-        print(f"[WARNING] No '.webp' files found in {files_dir_level1}.")
+        print(f"[WARNING] No '.webp' images found in {files_dir_level1}.")
         return
 
     measurements = {}
@@ -259,7 +272,7 @@ def run_limp():
                 prefix = parts[1]
                 ch = f"{parts[2]}_{parts[3]}" 
                 alt = parts[4].replace("km", "")
-        elif img_name.startswith("GlobalMeanRCS_"):
+        elif img_name.startswith("MeanRCS_"):
             parts = img_name.replace(".webp", "").split("_")
             if len(parts) >= 2:
                 prefix = parts[1]
@@ -275,7 +288,7 @@ def run_limp():
             if img_name.startswith("Quicklook_"):
                 measurements[prefix]['channels'].add(ch)
                 measurements[prefix]['alts'].add(alt)
-            elif img_name.startswith("GlobalMeanRCS_"):
+            elif img_name.startswith("MeanRCS_"):
                 measurements[prefix]['has_global_mean'] = True
                 measurements[prefix]['mean_rcs_filename'] = img_name
 
@@ -296,11 +309,15 @@ def run_limp():
         html_path = os.path.join(site_year_folder, f"{prefix}_Dashboard.html")
 
         if INCREMENTAL_PROCESSING and os.path.exists(html_path):
-            print(f"  -> [Skipped] Dashboard exists for: {prefix}")
+            print(f"  -> [SKIPPED] Dashboard already exists for: {prefix}")
             continue
             
+        # Uploading images to Cloudflare R2 instead of copying locally
+        print(f"  -> [UPLOADING] Sending {len(data['files'])} images to Cloudflare R2 for {prefix}...")
         for img_path in data['files']:
-            shutil.copy2(img_path, os.path.join(site_year_folder, os.path.basename(img_path)))
+            filename = os.path.basename(img_path)
+            cloud_path = f"{year}/{filename}" # Saves in a year folder inside the bucket
+            upload_to_r2(img_path, cloud_path)
             
         valid_channels = sorted(list(data['channels']))
         valid_alts = sorted(list(data['alts']), key=lambda x: float(x) if x.replace('.','',1).isdigit() else 0)
@@ -313,14 +330,14 @@ def run_limp():
                 valid_channels, 
                 valid_alts, 
                 data['has_global_mean'], 
-                data['mean_rcs_filename']
+                data['mean_rcs_filename'],
+                year
             )
-            print(f"  -> [OK]: {prefix}")
+            print(f"  -> [OK] HTML Dashboard created locally: {prefix}")
             dias_processados += 1
 
-    print(f"\n[INFO] LIMP: {dias_processados} new Dashboards in '{site_dir}'.")
+    print(f"\n[INFO] LIMP: Finished! {dias_processados} new dashboards generated.")
     
-    # Chama a função de atualização do calendário assim que terminar os HTMLs
     update_calendar()
 
 if __name__ == "__main__":

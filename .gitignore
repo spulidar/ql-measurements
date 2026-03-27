@@ -2,4 +2,5 @@
 /03-netcdf_data
 /05-data_level1
 /venv
-/credentials.py
+credentials.py
+*.webp

@@ -22,15 +22,7 @@
     .tab-btn.active { background: #0056b3; color: white; box-shadow: 0 4px 8px rgba(0,86,179,0.3); }
     
     .image-display { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }
-    
-    /* A CAIXA DA IMAGEM AGORA TEM TRANSIÇÃO SUAVE DE TAMANHO */
-    .image-card { 
-        background: white; padding: 15px; border-radius: 8px; 
-        box-shadow: 0 4px 10px rgba(0,0,0,0.15); 
-        width: 100%; 
-        max-width: 80%; /* Inicia em 80% para o Quicklook */
-        transition: max-width 0.4s ease-in-out; 
-    }
+    .image-card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); width: 100%; max-width: 80%; transition: max-width 0.4s ease-in-out; }
     .image-card img { width: 100%; height: auto; cursor: zoom-in; border-radius: 4px; display: block; }
     
     #myModal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.85); }
@@ -44,31 +36,25 @@
   <div class="dashboard">
       <div class="main-tabs">
           <button class="main-tab-btn active" id="tab-quicklooks" onclick="setMode('quicklooks')">Quicklooks</button>
-          <button class="main-tab-btn" id="tab-resumo" style="display: inline-block;" onclick="setMode('resumo')">Mean RCS</button>
+          <button class="main-tab-btn" id="tab-resumo" style="display: none;" onclick="setMode('resumo')">Global Summary</button>
       </div>
 
       <div id="controls-panel" class="controls">
-          <div class="tab-group">
-              <h3>CHANNEL</h3>
-              <button class="tab-btn ch-btn" onclick="setChannel('1064nm_AN', this)">1064nm AN</button>
+          <div class="tab-group"><h3>CHANNEL</h3><button class="tab-btn ch-btn" onclick="setChannel('1064nm_AN', this)">1064nm AN</button>
 <button class="tab-btn ch-btn" onclick="setChannel('355nm_AN', this)">355nm AN</button>
 <button class="tab-btn ch-btn" onclick="setChannel('355nm_PC', this)">355nm PC</button>
 <button class="tab-btn ch-btn" onclick="setChannel('532nm_AN', this)">532nm AN</button>
 <button class="tab-btn ch-btn" onclick="setChannel('532nm_PC', this)">532nm PC</button>
-
-          </div>
-          <div class="tab-group">
-              <h3>ALTITUDE</h3>
-              <button class="tab-btn alt-btn" onclick="setAltitude('5', this)">5 km</button>
+</div>
+          <div class="tab-group"><h3>ALTITUDE</h3><button class="tab-btn alt-btn" onclick="setAltitude('5', this)">5 km</button>
 <button class="tab-btn alt-btn" onclick="setAltitude('15', this)">15 km</button>
 <button class="tab-btn alt-btn" onclick="setAltitude('30', this)">30 km</button>
-
-          </div>
+</div>
       </div>
 
       <div class="image-display">
           <div class="image-card" id="img-card">
-              <img id="main-display" src="Quicklook_20200721sant_1064nm_AN_5km.webp" onclick="openModal(this.src)" alt="Lidar Image">
+              <img id="main-display" src="https://pub-2dc2005030bb4ee796dd63fd528879fa.r2.dev/2020/Quicklook_20200721sant_1064nm_AN_5km.webp" onclick="openModal(this.src)" alt="Lidar Image">
           </div>
       </div>
   </div>
@@ -82,6 +68,7 @@
     var currentAltitude = "5";
     var prefix = "20200721sant";
     var currentMode = "quicklooks";
+    var cloudBaseUrl = "https://pub-2dc2005030bb4ee796dd63fd528879fa.r2.dev/2020";
 
     document.addEventListener("DOMContentLoaded", function() {
         var firstCh = document.querySelector(".ch-btn");
@@ -93,9 +80,9 @@
     function updateImage() {
         var imgElement = document.getElementById("main-display");
         if (currentMode === "quicklooks") {
-            imgElement.src = "Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
+            imgElement.src = cloudBaseUrl + "/Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
         } else {
-            imgElement.src = "GlobalMeanRCS_20200721sant.webp";
+            imgElement.src = cloudBaseUrl + "/";
         }
     }
 
@@ -104,16 +91,16 @@
         document.getElementById("tab-quicklooks").classList.remove("active");
         document.getElementById("tab-resumo").classList.remove("active");
         
-        var imgCard = document.getElementById("img-card"); // Pega a caixa da imagem
+        var imgCard = document.getElementById("img-card");
 
         if (mode === "quicklooks") {
             document.getElementById("tab-quicklooks").classList.add("active");
             document.getElementById("controls-panel").style.display = "flex"; 
-            imgCard.style.maxWidth = "80%"; // Define para 80% da tela
+            imgCard.style.maxWidth = "80%"; 
         } else {
             document.getElementById("tab-resumo").classList.add("active");
             document.getElementById("controls-panel").style.display = "none"; 
-            imgCard.style.maxWidth = "50%"; // Encolhe para 50% da tela
+            imgCard.style.maxWidth = "50%"; 
         }
         updateImage();
     }
