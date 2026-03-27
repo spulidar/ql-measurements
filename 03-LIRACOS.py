@@ -160,7 +160,7 @@ def add_footer_and_logos(fig, date_footer):
 
         # UPDATING THE IMAGE POSITION
         x_right = x_left - spacing
-
+        
 # ==========================================
 # QUICKLOOK (COLORMAP + MEAN RCS WITH ERROR BANDS)
 # ==========================================
