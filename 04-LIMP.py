@@ -266,13 +266,13 @@ def run_limp():
         img_name = os.path.basename(img_path)
         prefix = None
         
-        if img_name.startswith("Quicklook_"):
+        if "Quicklook" in img_name:
             parts = img_name.replace(".webp", "").split("_")
             if len(parts) >= 5:
                 prefix = parts[1]
                 ch = f"{parts[2]}_{parts[3]}" 
                 alt = parts[4].replace("km", "")
-        elif img_name.startswith("MeanRCS_"):
+        elif "MeanRCS" in img_name:
             parts = img_name.replace(".webp", "").split("_")
             if len(parts) >= 2:
                 prefix = parts[1]
