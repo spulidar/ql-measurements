@@ -28,7 +28,7 @@ def process_single_file(args):
     nc_path, config = args
     channels_config = config['physics']['channels']
     incremental = config['processing']['incremental']
-    out_dir_base = config['directories']['02-processed_data']
+    out_dir_base = config['directories']['processed_data']
     c_speed = config['physics']['speed_of_light']
     
     from functions.core_io import setup_logger
@@ -177,9 +177,9 @@ if __name__ == "__main__":
     logger = setup_logger("LIPANCORA", config['directories']['log_dir'])
     logger.info("=== Starting LIPANCORA processing (Level 1) ===")
     
-    input_dir = os.path.join(os.getcwd(), config['directories']['02-processed_data'])
+    input_dir = os.path.join(os.getcwd(), config['directories']['processed_data'])
     all_nc_files = sorted(Path(input_dir).rglob("*.nc"))
-    files = [f for f in all_nc_files if "raw" in f.name]
+    files = [f for f in all_nc_files if "level" not in f.name]
 
     if not files:
         logger.warning(f"No Level 0 NetCDF data found in '{input_dir}'. Exiting.")

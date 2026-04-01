@@ -3,7 +3,7 @@
 # ==========================================
 
 processing:
-  incremental: False
+  incremental: false
   max_workers_io: 1
   max_workers_cpu: 1
   apply_cloud_mask: true

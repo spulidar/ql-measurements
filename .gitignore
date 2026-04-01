@@ -7,6 +7,7 @@ __pycache__/
 .venv/
 venv/
 env/
+test.py
 
 # ==========================================
 # MILGRAU Data Directories (Do NOT commit heavy data)

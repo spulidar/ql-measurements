@@ -32,8 +32,8 @@ def process_level2_file(args):
     try:
         stem = Path(nc_path).stem.replace('_level1_rcs', '')
         year, month = stem[:4], stem[4:6]
-        base_dir = Path(os.getcwd()) / config['directories']['level1_data'] / year / month / stem
-        out_dir = Path(os.getcwd()) / "06-level2_optical" / year / month / stem
+        base_dir = Path(os.getcwd()) / config['directories']['processed_data'] / year / month / stem
+        out_dir = Path(os.getcwd()) / config['directories']['processed_data'] / year / month / stem 
         ensure_directories(out_dir)
 
         level2_path = out_dir / f"{stem}_level2_optical.nc"
@@ -108,7 +108,7 @@ def process_level2_file(args):
                 )
                 
                 if best_idx > 0:
-                    plot_gluing_qa(alt_km, rcs_an, rcs_pc, glued_rcs, best_idx, g_conf['window_length_bins'], config, wl, ds, root_dir, out_dir, stem)
+                    plot_gluing_qa(alt_km, rcs_an, rcs_pc, glued_rcs, best_idx, g_conf['window_length_bins'], config, wl, ds, root_dir, os.path.join(out_dir,'level2-plots'), stem)
                 else:
                     logger.warning(f"[{stem}] Gluing failed for {wl} nm. Falling back to Analog only.")
                     glued_rcs = rcs_an
@@ -145,7 +145,7 @@ def process_level2_file(args):
             # Klett integration starts safely at the top of the healthy calibration region
             ref_idx = max_alt_idx 
             
-            plot_molecular_qa(alt_km, glued_rcs, simulated_mol, alt_km[min_alt_idx], alt_km[max_alt_idx], config, f"{wl} nm", ds, root_dir, out_dir, stem)
+            plot_molecular_qa(alt_km, glued_rcs, simulated_mol, alt_km[min_alt_idx], alt_km[max_alt_idx], config, f"{wl} nm", ds, root_dir, os.path.join(out_dir,'level2-plots'), stem)
 
             # --- C. KFS MONTE CARLO INVERSION ---
             logger.info(f"[{stem}] Running KFS Monte Carlo Inversion ({config['inversion']['monte_carlo_iterations']} iterations)...")
@@ -157,7 +157,7 @@ def process_level2_file(args):
                 iterations=config['inversion']['monte_carlo_iterations']
             )
             
-            plot_kfs_results(alt_km, b_mean, b_std, e_mean, e_std, config, f"{wl} nm", out_dir, stem, ds, root_dir)
+            plot_kfs_results(alt_km, b_mean, b_std, e_mean, e_std, config, f"{wl} nm", os.path.join(out_dir,'level2-plots'), stem, ds, root_dir)
             
 
             results_beta_mean.append(b_mean)
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     logger.info("=== Starting LEBEAR processing (Level 2 Optical Inversion) ===")
     
     root_dir = os.getcwd()
-    input_dir = os.path.join(root_dir, config['directories']['level1_data'])
+    input_dir = os.path.join(root_dir, config['directories']['processed_data'])
     files = sorted(Path(input_dir).rglob("*_rcs.nc"))
 
     if not files:

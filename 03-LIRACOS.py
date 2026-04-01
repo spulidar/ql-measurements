@@ -102,7 +102,7 @@ if __name__ == "__main__":
     logger.info("=== Starting LIRACOS rendering (Visualization) ===")
     
     root_dir = os.getcwd()
-    base_data_folder = os.path.join(root_dir, config['directories']['02-processed_data'])
+    base_data_folder = os.path.join(root_dir, config['directories']['processed_data'])
     nc_files = sorted(Path(base_data_folder).rglob("*_level1_rcs.nc"))
 
     if not nc_files:

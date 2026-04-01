@@ -43,8 +43,8 @@ def process_single_netcdf(args):
     save_id = f"{date_str}sa{period}"
     year_str, month_str = save_id[:4], save_id[4:6]
     
-    out_dir = os.path.join(os.getcwd(), config_dirs['02-processed_data'], year_str, month_str)
-    netcdf_path = os.path.join(out_dir, f"{save_id}_raw.nc")
+    out_dir = os.path.join(os.getcwd(), config_dirs['processed_data'], year_str, month_str, save_id)
+    netcdf_path = os.path.join(out_dir, f"{save_id}.nc")
 
     files_meas = group_df[group_df["meas_type"] == "measurements"]["filepath"].tolist()
     files_meas_dc = group_df[group_df["meas_type"] != "measurements"]["filepath"].tolist()
