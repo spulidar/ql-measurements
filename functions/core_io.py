@@ -9,11 +9,10 @@ and raw Licel binary file scanning/parsing.
 import os
 import logging
 import yaml
-import urllib3
 import pandas as pd
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from pathlib import Path
+from siphon.simplewebservice.wyoming import WyomingUpperAir
 
 def load_config(config_path="config.yaml"):
     """
@@ -136,95 +135,47 @@ def read_licel_header(filepath):
         return None, None, None, None, None
 
 
-def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger):
+def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="01-data/wyoming_cache"):
     """
-    Dynamically fetches radiosonde data (Pressure, Altitude, Temperature) 
-    from the University of Wyoming archive based on the measurement time.
+    Fetches Wyoming radiosonde data (Pressure, Altitude, Temperature) 
+    using the Siphon library, bypassing manual HTML parsing.
+    Uses a local cache to prevent redundant downloads and timeouts.
     Returns a clean Pandas DataFrame or None if the server fails.
     """
-    # 1. Determine the closest sounding time (00Z or 12Z) based on atmospheric logic
+    # Determine the closest sounding time (00Z or 12Z)
     hour_utc = measurement_dt_utc.hour
     if 0 <= hour_utc <= 8:
-        target_dt = measurement_dt_utc
-        rs_hour = '00'
+        target_dt = measurement_dt_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     elif 9 <= hour_utc <= 20:
-        target_dt = measurement_dt_utc
-        rs_hour = '12'
+        target_dt = measurement_dt_utc.replace(hour=12, minute=0, second=0, microsecond=0)
     else: # 21 to 23 belongs to the next day's 00Z sounding
-        target_dt = measurement_dt_utc + timedelta(days=1)
-        rs_hour = '00'
+        target_dt = (measurement_dt_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         
     year = target_dt.strftime('%Y')
     month = target_dt.strftime('%m')
-    day = target_dt.strftime('%d')
     
-    url = f"http://weather.uwyo.edu/cgi-bin/sounding?region=samer&TYPE=TEXT%3ALIST&YEAR={year}&MONTH={month}&FROM={day}{rs_hour}&TO={day}{rs_hour}&STNM={station_id}"
+    # Setup local cache path based on the sounding time
+    cache_path = Path(os.getcwd()) / cache_dir / year / month
+    cache_path.mkdir(parents=True, exist_ok=True)
     
-    logger.info(f"  -> [RADIOSONDE] Fetching {year}-{month}-{day} {rs_hour}Z for station {station_id}...")
+    cache_filename = f"radiosonde_{station_id}_{target_dt.strftime('%Y%m%d_%H')}Z.csv"
+    cache_file = cache_path / cache_filename
+    
+    # Check if we already have this specific sounding in our local cache
+    if cache_file.exists():
+        logger.info(f"  -> [RADIOSONDE] Cached sounding found: {cache_filename}. Skipping download.")
+        return pd.read_csv(cache_file)
+
+    logger.info(f"  -> [RADIOSONDE] Fetching {target_dt.strftime('%Y-%m-%d %H:%M')}Z for station {station_id} via Siphon...")
     
     try:
-        # 15.0 seconds timeout protects the pipeline from infinite hanging
-        http = urllib3.PoolManager(cert_reqs='CERT_NONE', timeout=15.0) 
-        response = http.request('GET', url)
+        # Fetch data using Siphon (Zero HTML parsing required!)
+        df_raw = WyomingUpperAir.request_data(target_dt, station_id).dropna()
+        df_raw.to_csv(cache_file, index=False)
+        logger.info("  -> [OK] Radiosonde data successfully fetched and cached!")
         
-        if response.status != 200:
-            logger.warning(f"  -> [RADIOSONDE ERROR] HTTP {response.status}. Wyoming server is down.")
-            return None
-            
-        soup = BeautifulSoup(response.data, 'html.parser')
-        
-        # Check if the server returned a "Sorry, can't find data" message
-        if soup.find('h2') is None or 'Can\'t' in soup.text:
-            logger.warning("  -> [RADIOSONDE ERROR] Data not found on the server for this date.")
-            return None
-            
-        pre_tag = soup.find('pre')
-        if pre_tag is None:
-            logger.warning("  -> [RADIOSONDE ERROR] Unexpected HTML format.")
-            return None
-            
-        # 2. Extract and parse the raw text from the <pre> tag
-        raw_text = pre_tag.text
-        lines = raw_text.split('\n')
-        
-        # Find where the actual data table starts (after the dashed line)
-        data_start_idx = 0
-        for idx, line in enumerate(lines):
-            if line.startswith("-----------------------------------------------------------------------------"):
-                data_start_idx = idx + 1
-                break
-                
-        if data_start_idx == 0:
-            logger.warning("  -> [RADIOSONDE ERROR] Could not parse the table structure.")
-            return None
-            
-        altitudes, pressures, temperatures = [], [], []
-        
-        for line in lines[data_start_idx:]:
-            parts = line.split()
-            if len(parts) >= 3: # We need at least Press, Height, Temp
-                try:
-                    press = float(parts[0])
-                    alt = float(parts[1])
-                    temp_c = float(parts[2])
-                    
-                    pressures.append(press)
-                    altitudes.append(alt)
-                    temperatures.append(temp_c + 273.15) # Convert Celsius to Kelvin
-                except ValueError:
-                    continue # Skip lines with text or missing values
-                    
-        if not altitudes:
-            logger.warning("  -> [RADIOSONDE ERROR] Parsed table is empty.")
-            return None
-            
-        # 3. Build the final dataframe and remove negative/corrupted values
-        df = pd.DataFrame({'alt': altitudes, 'press': pressures, 'temp': temperatures})
-        df = df[(df['alt'] > 0) & (df['press'] > 0) & (df['temp'] > 0)].dropna()
-        
-        logger.info("  -> [OK] Radiosonde data successfully parsed!")
-        return df
+        return df_raw
         
     except Exception as e:
-        logger.warning(f"  -> [RADIOSONDE ERROR] Failed to connect to Wyoming server: {e}")
+        logger.warning(f"  -> [RADIOSONDE ERROR] Failed to fetch data from Wyoming via Siphon: {e}")
         return None

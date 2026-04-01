@@ -60,8 +60,8 @@ def calculate_molecular_profile(altitude_array_m, wavelength_nm, df_radiosonde=N
     """
     # 1. Atmospheric State (Pressure in hPa, Temp in K)
     if df_radiosonde is not None and not df_radiosonde.empty:
-        press = np.interp(altitude_array_m, df_radiosonde['alt'].values, df_radiosonde['press'].values)
-        temp = np.interp(altitude_array_m, df_radiosonde['alt'].values, df_radiosonde['temp'].values)
+        press = np.interp(altitude_array_m, df_radiosonde['height'].values, df_radiosonde['pressure'].values)
+        temp = np.interp(altitude_array_m, df_radiosonde['height'].values, df_radiosonde['temperature'].values + 273.15)
     else:
         press, temp = get_standard_atmosphere(altitude_array_m)
         
@@ -88,6 +88,57 @@ def calculate_molecular_profile(altitude_array_m, wavelength_nm, df_radiosonde=N
     beta_mol = alpha_mol / lr_mol
     
     return beta_mol, alpha_mol
+
+def find_optimal_reference_altitude(rcs_signal, beta_mol, min_idx, max_idx, window_size=60):
+    """
+    Finds the most stable, aerosol-free region to be used as the calibration 
+    reference for the KFS inversion. It searches for the region where the 
+    RCS profile best matches the shape of the molecular profile (lowest variance).
+    
+    Args:
+        rcs_signal (np.array): Range Corrected Signal array.
+        beta_mol (np.array): Calculated molecular backscatter array.
+        min_idx (int): Minimum altitude index allowed for the search.
+        max_idx (int): Maximum altitude index allowed for the search.
+        window_size (int): Number of bins to calculate the rolling variance.
+                           (e.g., 60 bins * 7.5m = 450 meters search block).
+        
+    Returns:
+        int: The global index of the optimal reference altitude.
+    """
+    # Ensure we have a valid search space to avoid index crashes
+    if (max_idx - min_idx) <= window_size:
+        return max_idx 
+        
+    # Extract the search region allowed by the YAML configuration
+    search_rcs = rcs_signal[min_idx:max_idx]
+    search_mol = beta_mol[min_idx:max_idx]
+    
+    # Calculate the ratio (Signal / Molecular)
+    # In an aerosol-free zone, this ratio is constant (pure Rayleigh scattering)
+    # Adding a small epsilon (1e-12) prevents division by zero warnings
+    ratio = search_rcs / (search_mol + 1e-12)
+    
+    best_idx = max_idx
+    min_variance = float('inf')
+    
+    # Slide the window to find the flattest ratio
+    for i in range(len(ratio) - window_size):
+        window_ratio = ratio[i : i + window_size]
+        
+        # Skip windows with NaNs or negative/zero physical values
+        if np.any(np.isnan(window_ratio)) or np.any(window_ratio <= 0):
+            continue
+            
+        variance = np.var(window_ratio)
+        
+        if variance < min_variance:
+            min_variance = variance
+            # The optimal reference point is the center of the flattest window
+            # We add min_idx to map it back to the global array coordinates
+            best_idx = min_idx + i + (window_size // 2)
+            
+    return best_idx
 
 # ==========================================
 # PHASE 2: SIGNAL GLUING (ANALOG + PHOTON)
@@ -210,3 +261,123 @@ def kfs_inversion_monte_carlo(rcs_mean, rcs_error, beta_mol, lr_aerosol, lr_mol,
     extinction_std = beta_aer_std * lr_aerosol
     
     return beta_aer_mean, beta_aer_std, extinction_mean, extinction_std
+    
+
+def calculate_pbl_height_gradient(rcs_signal, alt_m, min_search_m=500.0, max_search_m=4000.0, smooth_bins=15):
+    """
+    Estimates the Planetary Boundary Layer (PBL) height using the Gradient Method.
+    The PBL top is identified as the altitude with the strongest negative gradient
+    (sharpest drop in aerosol concentration) in the smoothed Range Corrected Signal.
+    
+    Args:
+        rcs_signal (np.array): Range Corrected Signal (glued or single channel).
+        alt_m (np.array): Altitude array in meters.
+        min_search_m (float): Minimum altitude to search (avoids telescope overlap/surface noise).
+        max_search_m (float): Maximum altitude to search (avoids high clouds).
+        smooth_bins (int): Window size for smoothing the signal before taking the derivative.
+        
+    Returns:
+        float: Estimated PBL height in kilometers, or np.nan if calculation fails.
+    """
+    # 1. Restrict search to typical physical boundary layer altitudes
+    valid_idx = np.where((alt_m >= min_search_m) & (alt_m <= max_search_m))[0]
+    
+    # Ensure we have enough data points in the window to perform smoothing
+    if len(valid_idx) < smooth_bins:
+        return np.nan
+        
+    search_alt = alt_m[valid_idx]
+    search_rcs = rcs_signal[valid_idx]
+    
+    # 2. Smooth the signal heavily to prevent noise from creating false gradients
+    # A rolling mean acts as a low-pass filter, leaving only the macroscopic PBL drop-off
+    smoothed_rcs = pd.Series(search_rcs).rolling(window=smooth_bins, center=True, min_periods=1).mean().values
+    
+    # 3. Calculate the first derivative (gradient) w.r.t altitude (dRCS / dz)
+    gradient = np.gradient(smoothed_rcs, search_alt)
+    
+    # 4. Find the strongest negative gradient
+    min_grad_idx = np.argmin(gradient)
+    
+    # Safety check: ensure we actually found a drop-off (negative gradient)
+    if gradient[min_grad_idx] >= 0:
+        return np.nan 
+        
+    pbl_m = search_alt[min_grad_idx]
+    
+    return float(pbl_m / 1000.0)
+
+def calculate_tropopause_heights(df_radiosonde):
+    """
+    Calculates the Tropopause height using two distinct atmospheric definitions:
+    1. CPT (Cold Point Tropopause): The altitude of the absolute temperature minimum.
+    2. LRT (Lapse Rate Tropopause): WMO definition where the lapse rate drops to <= 2 K/km.
+    
+    Args:
+        df_radiosonde (pd.DataFrame): DataFrame containing 'alt' (m) and 'temp' (K).
+        
+    Returns:
+        tuple: (cpt_height_km, lrt_height_km). Returns (np.nan, np.nan) if calculation fails.
+    """
+    if df_radiosonde is None or df_radiosonde.empty:
+        return np.nan, np.nan
+        
+    alt_m = df_radiosonde['height'].values
+    temp_k = df_radiosonde['temperature'].values+273,15
+    
+    # We restrict the search to altitudes above 5000m (5 km) to strictly avoid 
+    # false positives caused by planetary boundary layer (PBL) inversions.
+    valid_idx = np.where(alt_m > 5000.0)[0]
+    if len(valid_idx) == 0:
+        return np.nan, np.nan
+        
+    search_alt = alt_m[valid_idx]
+    search_temp = temp_k[valid_idx]
+    
+    # ==========================================
+    # 1. Cold Point Tropopause (CPT)
+    # ==========================================
+    cpt_idx = np.argmin(search_temp)
+    cpt_km = search_alt[cpt_idx] / 1000.0
+    
+    # ==========================================
+    # 2. Lapse Rate Tropopause (LRT) - WMO Definition
+    # ==========================================
+    lrt_km = np.nan
+    
+    for i in range(len(search_alt) - 1):
+        # Calculate forward lapse rate (Gamma = -dT/dz) in K/km
+        dz_km = (search_alt[i+1] - search_alt[i]) / 1000.0
+        dt_k = search_temp[i+1] - search_temp[i]
+        
+        if dz_km == 0:
+            continue
+            
+        gamma = -dt_k / dz_km
+        
+        # WMO Condition 1: Lapse rate drops to 2.0 K/km or less
+        if gamma <= 2.0:
+            z_i = search_alt[i]
+            t_i = search_temp[i]
+            
+            # WMO Condition 2: The average lapse rate between this level and all 
+            # higher levels within the next 2 km must not exceed 2.0 K/km.
+            window_indices = np.where((search_alt > z_i) & (search_alt <= z_i + 2000.0))[0]
+            
+            if len(window_indices) > 0:
+                valid_window = True
+                
+                for j in window_indices:
+                    dz_window_km = (search_alt[j] - z_i) / 1000.0
+                    dt_window_k = search_temp[j] - t_i
+                    gamma_avg = -dt_window_k / dz_window_km
+                    
+                    if gamma_avg > 2.0:
+                        valid_window = False
+                        break # Fails WMO condition 2, move to the next altitude
+                        
+                if valid_window:
+                    lrt_km = z_i / 1000.0
+                    break # First level to satisfy all conditions is the LRT
+                    
+    return cpt_km, lrt_km

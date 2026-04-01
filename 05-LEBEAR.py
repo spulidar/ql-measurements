@@ -16,6 +16,18 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 import warnings
 
+# Import Physics & Viz Functions
+from functions.viz_utils import plot_gluing_qa, plot_molecular_qa, plot_kfs_results
+from functions.physics_utils import (
+    calculate_molecular_profile, 
+    slide_glue_signals, 
+    kfs_inversion_monte_carlo, 
+    find_optimal_reference_altitude,
+    calculate_tropopause_heights,
+    calculate_pbl_height_gradient
+)
+
+
 # Suppress expected warnings for math on NaN slices
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -41,8 +53,8 @@ def process_level2_file(args):
             return f"[SKIPPED] Level 2 already exists: {stem}"
 
         logger.info(f"[{stem}] Loading Level 1 RCS data...")
-        ds = xr.open_dataset(nc_path)
-        ds.load()
+        with xr.open_dataset(nc_path) as ds:
+            ds.load()
         
         # 1. Extract Time and Altitude
         alt_m = ds['range'].values if 'range' in ds.coords else ds['altitude_m'].values
@@ -64,16 +76,13 @@ def process_level2_file(args):
         if df_radio is None:
             logger.info(f"[{stem}] Using US Standard Atmosphere 1976 as fallback.")
 
-        # 3. Import Physics & Viz Functions
-        from functions.physics_utils import calculate_molecular_profile, slide_glue_signals, kfs_inversion_monte_carlo
-        from functions.viz_utils import plot_gluing_qa, plot_molecular_qa, plot_kfs_results
-        
         channels_present = ds.channel.values
         wavelengths = ["355", "532", "1064"]
         
         results_beta_mean, results_beta_std = [], []
         results_ext_mean, results_ext_std = [], []
         final_channels = []
+        results_pbl = []
 
         logger.info(f"[{stem}] Starting Optical Inversion Pipeline...")
 
@@ -114,6 +123,13 @@ def process_level2_file(args):
                     glued_rcs = rcs_an
             else:
                 glued_rcs = rcs_an if rcs_an is not None else rcs_pc
+            
+            # --- A.1 PBL DETECTION ---
+            # Estimate PBL height using the glued signal for this specific wavelength
+            pbl_km = calculate_pbl_height_gradient(glued_rcs, alt_m)
+            if not np.isnan(pbl_km):
+                results_pbl.append(pbl_km)
+                logger.info(f"  -> [{stem}] PBL gradient detected at {pbl_km:.2f} km for {wl} nm.")
 
             # Error propagation placeholder (simplified for mean profile)
             if ch_an:
@@ -142,9 +158,10 @@ def process_level2_file(args):
                 
             simulated_mol = beta_mol * scaling_factor
             
-            # Klett integration starts safely at the top of the healthy calibration region
-            ref_idx = max_alt_idx 
-            
+            # Dynamically find the best aerosol-free reference altitude
+            # window_size=60 represents a ~450m block assuming 7.5m vertical resolution
+            ref_idx = find_optimal_reference_altitude(glued_rcs, simulated_mol, min_alt_idx, max_alt_idx, window_size=60)
+            logger.info(f"  -> [{stem}] Optimal KFS reference altitude found at {alt_km[ref_idx]:.2f} km.")
             plot_molecular_qa(alt_km, glued_rcs, simulated_mol, alt_km[min_alt_idx], alt_km[max_alt_idx], config, f"{wl} nm", ds, root_dir, os.path.join(out_dir,'level2-plots'), stem)
 
             # --- C. KFS MONTE CARLO INVERSION ---
@@ -189,16 +206,35 @@ def process_level2_file(args):
         
         # Inject Radiosonde Data into NetCDF for ultimate reproducibility
         if df_radio is not None:
-            out_ds = out_ds.assign_coords(radiosonde_alt=("radiosonde_alt", df_radio['alt'].values))
-            out_ds["Radiosonde_Pressure_hPa"] = (("radiosonde_alt",), df_radio['press'].values)
-            out_ds["Radiosonde_Temperature_K"] = (("radiosonde_alt",), df_radio['temp'].values)
+            out_ds = out_ds.assign_coords(radiosonde_alt=("radiosonde_alt", df_radio['height'].values))
+            out_ds["Radiosonde_Pressure_hPa"] = (("radiosonde_alt",), df_radio['pressure'].values)
+            out_ds["Radiosonde_Temperature_K"] = (("radiosonde_alt",), df_radio['temperature'].values+273.15)
             
         out_ds.attrs["processing_level"] = "Level 2: Gluing, Rayleigh Molecular, Monte Carlo KFS Inversion"
+        
+        # ---------------------------------------------------------
+        # METADATA: PBL and Tropopause (Global Attributes)
+        # ---------------------------------------------------------
+        # Calculate the ensemble mean of the PBL heights detected across all wavelengths
+        mean_pbl_km = np.nanmean(results_pbl) if results_pbl else np.nan
+        out_ds.attrs["pbl_height_km"] = mean_pbl_km
+        
+        if not np.isnan(mean_pbl_km):
+            logger.info(f"  -> [{stem}] Final Ensemble PBL Height: {mean_pbl_km:.2f} km")
+        
+        # Calculate Tropopause heights based on the fetched radiosonde
+        cpt_km, lrt_km = calculate_tropopause_heights(df_radio)
+        if not np.isnan(cpt_km):
+            logger.info(f"  -> [{stem}] Tropopause Found | CPT: {cpt_km:.2f} km | LRT: {lrt_km:.2f} km")
+            
+        out_ds.attrs["tropopause_cpt_km"] = cpt_km
+        out_ds.attrs["tropopause_lrt_km"] = lrt_km
+        
         out_ds.attrs["history"] = f"{ds.attrs.get('history', '')}\nInverted with MILGRAU LEBEAR on {datetime.now(timezone.utc).isoformat()} UTC"
 
         out_ds.to_netcdf(level2_path)
         ds.close()
-        
+
         return f"[OK] Level 2 processing complete for {stem}"
 
     except Exception as e:
@@ -224,22 +260,24 @@ if __name__ == "__main__":
     interactive_qa = config.get('inversion', {}).get('interactive_qa', True)
     modo = "Incremental" if config['processing']['incremental'] else "Rewriting"
     
-    # Force single worker if Interactive QA is ON to prevent window crashing
-    max_workers = 1 if interactive_qa else config['processing']['max_workers_cpu']
-    
-    logger.info(f"Found {len(files)} Level 1 files. Mode: {modo}. Workers: {max_workers} (QA Interactive: {interactive_qa})")
+    logger.info(f"Found {len(files)} Level 1 files. Mode: {modo}. Execução: Sequencial (QA Interactive: {interactive_qa})")
 
     process_args = [(str(f), config, root_dir) for f in files]
     
     success_count = 0
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        for result in executor.map(process_level2_file, process_args):
-            if "[OK]" in result or "[SKIPPED]" in result:
-                logger.info(result)
-                success_count += 1
-            else:
-                logger.error(result)
+    # Loop sequencial limpo (Adeus Multiprocessing!)
+    for args in process_args:
+        result = process_level2_file(args)
+        
+        if "[OK]" in result or "[SKIPPED]" in result:
+            logger.info(result)
+            success_count += 1
+        else:
+            logger.error(result)
 
-    if success_count == len(files): logger.info("=== LEBEAR processing finished successfully for all files! ===")
-    elif success_count > 0: logger.warning(f"=== LEBEAR finished. {success_count}/{len(files)} successful. Check errors. ===")
-    else: logger.error("=== LEBEAR failed completely. No Level 2 files were generated. ===")
+    if success_count == len(files): 
+        logger.info("=== LEBEAR processing finished successfully for all files! ===")
+    elif success_count > 0: 
+        logger.warning(f"=== LEBEAR finished. {success_count}/{len(files)} successful. Check errors in log. ===")
+    else: 
+        logger.error("=== LEBEAR failed completely. No Level 2 files were generated. ===")
