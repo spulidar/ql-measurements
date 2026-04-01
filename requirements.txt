@@ -1,15 +1,27 @@
-# Data Processing & Arrays
+# =========================
+# MILGRAU - DEPENDENCIES
+# =========================
+
+# Core Math & Data Arrays
 numpy>=1.24.0
 pandas>=2.0.0
-xarray>=2023.0.0
+
+# NetCDF Multidimensional Processing
+xarray>=2023.1.0
 netCDF4>=1.6.0
 
-# Scientific & Lidar Specific
-atmospheric_lidar>=0.5.0
+# Physics Integration & Signal Processing
+scipy>=1.10.0
 
-# Visualization
+# Visualization & QA Plots
 matplotlib>=3.7.0
 
-# Cloud & Web
+# Cloud Publisher (Cloudflare R2 / AWS S3)
 boto3>=1.26.0
+
+# Web Scraping (Wyoming Radiosonde)
+beautifulsoup4>=4.11.0
+urllib3>=1.26.0
+
+# Configuration Management
 PyYAML>=6.0
