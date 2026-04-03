@@ -53,22 +53,28 @@ def upload_to_r2(s3_client, bucket_name, local_file_path, cloud_file_key, logger
 def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid_alts, has_global_mean, mean_rcs_file, year, cloud_public_url):
     """Generates the static HTML dashboard embedding cloud images (Compact Light Theme)."""
     
-    # --- SMART DEFAULT SELECTION ---
-    # Try to find a 532nm analog channel as default. If not found, fallback to the first available.
-    default_ch = next((ch for ch in valid_channels if "532" in ch and "an" in ch), valid_channels[0] if valid_channels else "")
-    # Try to find 15km as the default altitude. If not found, fallback to the first available.
+    # --- SMART DEFAULT SELECTION (Case-Insensitive Fix) ---
+    # Convert 'ch' to lower() so "532nm_AN" matches "an" successfully
+    default_ch = next((ch for ch in valid_channels if "532" in ch and "an" in ch.lower()), valid_channels[0] if valid_channels else "")
     default_alt = next((alt for alt in valid_alts if "15" == alt or "15.0" == alt), valid_alts[0] if valid_alts else "")
     
-    # Physics colored buttons adapted for Light Theme
+    # Physics colored buttons adapted for Light Theme + Sync Active State
     channel_buttons = ""
     for ch in valid_channels:
         color_class = "btn-default"
         if "1064" in ch: color_class = "btn-ir"
         elif "532" in ch: color_class = "btn-vis"
         elif "355" in ch: color_class = "btn-uv"
-        channel_buttons += f'<button class="tab-btn ch-btn {color_class}" onclick="setChannel(\'{ch}\', this)">{ch.replace("_", " ")}</button>\n'
         
-    altitude_buttons = "".join([f'<button class="tab-btn alt-btn" onclick="setAltitude(\'{alt}\', this)">{alt} km</button>\n' for alt in valid_alts])
+        # Add the 'active' CSS class exactly to the default channel
+        active_class = " active" if ch == default_ch else ""
+        channel_buttons += f'<button class="tab-btn ch-btn {color_class}{active_class}" onclick="setChannel(\'{ch}\', this)">{ch.replace("_", " ")}</button>\n'
+        
+    altitude_buttons = ""
+    for alt in valid_alts:
+        # Add the 'active' CSS class exactly to the default altitude
+        active_class = " active" if alt == default_alt else ""
+        altitude_buttons += f'<button class="tab-btn alt-btn{active_class}" onclick="setAltitude(\'{alt}\', this)">{alt} km</button>\n'
 
     global_tab_style = "display: flex;" if has_global_mean else "display: none;"
     cloud_base_url = f"{cloud_public_url}/{year}"
@@ -87,7 +93,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
         margin: 0; 
         padding: 0; 
         height: 100vh;
-        overflow: hidden; /* Remove scroll da pagina inteira */
+        overflow: hidden; 
     }}
     
     /* Top Menu Bar */
@@ -137,11 +143,10 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     .btn-default.active {{ background: #0056b3; color: #fff; border-color: #004085; }}
     .alt-btn.active {{ background: #546e7a; color: #fff; border-color: #37474f; }}
 
-    /* Image Display Area (Fills remaining height perfectly) */
+    /* Image Display Area */
     .image-container {{ 
         padding: 15px; 
         text-align: center; 
-        /* 100vh (tela inteira) menos o topo (~135px) = Imagem perfeita sem scroll */
         height: calc(100vh - 145px); 
         display: flex; 
         justify-content: center; 
@@ -208,12 +213,8 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     var cloudBaseUrl = "{cloud_base_url}";
     var imgElement = document.getElementById("main-display");
 
-    document.addEventListener("DOMContentLoaded", function() {{
-        var firstCh = document.querySelector(".ch-btn");
-        var firstAlt = document.querySelector(".alt-btn");
-        if(firstCh) firstCh.classList.add("active");
-        if(firstAlt) firstAlt.classList.add("active");
-    }});
+    // REMOVIDO: O Javascript burro que selecionava os primeiros botões cegamente
+    // document.addEventListener("DOMContentLoaded", function() {{ ... }});
 
     function updateImage() {{
         imgElement.style.opacity = 0.4;
