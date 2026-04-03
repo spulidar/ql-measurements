@@ -7,7 +7,18 @@
   <script src="https://unpkg.com/js-year-calendar@latest/dist/js-year-calendar.min.js"></script>
   
   <style>  
-    /* Cores das Legendas */
+    /* Global Font & Background */
+    body { font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; color: #333; margin: 0; padding: 10px; background: transparent; }
+
+    /* ==================================================
+       BUG FIX: PREVENT JUMPING/OVERLAPPING YEARS
+       ================================================== */
+    .calendar-header * { transition: none !important; animation: none !important; }
+    
+    /* Calendar Wrapper (Original light borders) */
+    .calendar { background: #ffffff; border-radius: 4px; border: 1px solid #ddd; overflow: hidden; }
+
+    /* Measurement Legend Colors */
     .normalmeasurement { background-color:#A3E4D7; }
     .cirrusmeasurement { background-color:#789ef0; }
     .turbulencemeasurement { background-color:#F9E79F; }
@@ -15,47 +26,62 @@
     .hungatonga { background-color:#BFA99B; }          
     .earthcaremeasurement { background-color:#d29af5; }
 
-    /* Estilo do menu de pop-up */
-    .modal-overlay {
+    /* ==================================================
+       CONTEXTUAL POPOVER (FLOATING MENU)
+       ================================================== */
+    .popover-menu {
+        position: absolute;
         display: none; 
-        position: fixed; 
-        top: 0; left: 0; right: 0; bottom: 0;
-        width: 100%; height: 100%;
-        background-color: rgba(0,0,0,0.6); 
-        z-index: 9999; 
-        justify-content: center; 
+        background: #ffffff;
+        padding: 6px 10px;
+        border-radius: 30px; 
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        border: 1px solid #e0e0e0;
+        z-index: 1000;
+        flex-direction: row;
+        gap: 8px;
+        animation: pop 0.15s ease-out;
+    }
+
+    /* Downward pointing arrow */
+    .popover-menu::after {
+        content: ''; position: absolute; bottom: -6px; left: 50%; margin-left: -6px;
+        border-width: 6px 6px 0; border-style: solid; border-color: #ffffff transparent transparent transparent;
+    }
+    .popover-menu::before {
+        content: ''; position: absolute; bottom: -7px; left: 50%; margin-left: -7px;
+        border-width: 7px 7px 0; border-style: solid; border-color: #d0d0d0 transparent transparent transparent;
+    }
+
+    @keyframes pop {
+        from { opacity: 0; transform: translateY(5px) scale(0.95); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* AM/PM/NT Mini Buttons */
+    .mini-btn {
+        background: #f0f2f5;
+        border: 1px solid transparent;
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #444;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
         align-items: center;
+        gap: 4px;
+        font-family: monospace;
     }
-    .modal-box {
-        background: #ffffff; 
-        padding: 25px; 
-        border-radius: 10px; 
-        width: 300px; 
-        text-align: center; 
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-        box-shadow: 0 5px 20px rgba(0,0,0,0.5);
-    }
-    .modal-box h3 { margin-top: 0; color: #333; font-size: 18px; margin-bottom: 5px; }
-    .modal-subtitle { font-size: 13px; color: #666; margin-top: 0; margin-bottom: 20px; }
-    .meas-btn {
-        display: block; width: 100%; padding: 12px; margin: 10px 0;
-        background: #17a2b8; color: white; border: none; border-radius: 6px;
-        cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.2s;
-    }
-    .meas-btn:hover { background: #138496; }
-    .close-btn {
-        display: block; width: 100%; padding: 10px; margin-top: 20px;
-        background: #dc3545; color: white; border: none; border-radius: 6px; 
-        cursor: pointer; font-size: 15px; font-weight: bold;
-    }
-    .close-btn:hover { background: #c82333; }
+    .mini-btn:hover { background: #0056b3; color: white; border-color: #004085; transform: translateY(-1px); }
   </style> 
 </head>
 <body>
   
   <div id="calendar"></div>
 
-  <div style="margin-top: 20px; font-family: sans-serif;">
+  <div style="margin-top: 20px; font-family: sans-serif; padding-left: 10px;">
     <font size="-1"><span class="normalmeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Daily measurement with default setup - 1 minute time period profiles.</font><br>
     <font size="-1"><span class="cirrusmeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Daily measurement with default setup - 1 minute time period profiles and Cirrus detection.</font><br>
     <font size="-1"><span class="turbulencemeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Turbulence measurement with 2 second time period profiles.</font><br>
@@ -63,20 +89,12 @@
     <font size="-1"><span class="hungatonga"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;Volcanic layer detection measurement with default setup - 1 minute time period profiles.</font><br>
     <font size="-1"><span class="earthcaremeasurement"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span> &nbsp;&nbsp;EarthCare satellite measurement with default setup - 1 minute time period profiles.</font>
   </div>
-	
-<div id="measurementsModal" class="modal-overlay">
-      <div class="modal-box">
-          <h3 id="modalDateTitle"></h3>
-          <p class="modal-subtitle">Multiple measurements, please choose time period:</p>
-          <div id="modalButtonsContainer"></div>
-          <button class="close-btn" onclick="closeMeasurementsModal()">Cancel</button>
-      </div>
-  </div>
+    
+  <div id="mini-popover" class="popover-menu"></div>
 
 <script>
-	
-var myDataSource = [
- 
+
+var myDataSource = [ 
     {
     startDate: new Date(2021, 5, 16), endDate: new Date(2021, 5, 16), color: '#A3E4D7', url: '2021/20210616sapm_Dashboard.html'
   },
@@ -2480,20 +2498,24 @@ var myDataSource = [
   {
     startDate: new Date(2024, 3, 1), endDate: new Date(2024, 3, 1), color: '#A3E4D7', url: '2024/20240401sant_Dashboard.html'
   },
+ // MARCADOR_AUTOMATICO
+];
+
+var myDataSource = [
   // MARCADOR_AUTOMATICO
 ];
 
-var diasComMedida = {};
-myDataSource.forEach(function(evento) {
-    var diaAtual = new Date(evento.startDate);
-    var dataFim = new Date(evento.endDate);
-    diaAtual.setHours(0,0,0,0);
-    dataFim.setHours(23,59,59,999);
+var daysWithMeasurements = {};
+myDataSource.forEach(function(eventItem) {
+    var currentDay = new Date(eventItem.startDate);
+    var endDate = new Date(eventItem.endDate);
+    currentDay.setHours(0,0,0,0);
+    endDate.setHours(23,59,59,999);
     
-    while(diaAtual <= dataFim) {
-        var dataFormatada = diaAtual.getFullYear() + '-' + diaAtual.getMonth() + '-' + diaAtual.getDate();
-        diasComMedida[dataFormatada] = true;
-        diaAtual.setDate(diaAtual.getDate() + 1); 
+    while(currentDay <= endDate) {
+        var formattedDate = currentDay.getFullYear() + '-' + currentDay.getMonth() + '-' + currentDay.getDate();
+        daysWithMeasurements[formattedDate] = true;
+        currentDay.setDate(currentDay.getDate() + 1); 
     }
 });
 
@@ -2504,9 +2526,8 @@ new Calendar('#calendar', {
     dataSource: myDataSource,
     
     customDayRenderer: function(element, date) {
-        var dataFormatada = date.getFullYear() + '-' + date.getMonth() + '-' + date.getDate();
-        
-        if (!diasComMedida[dataFormatada]) {
+        var formattedDate = date.getFullYear() + '-' + date.getMonth() + '-' + date.getDate();
+        if (!daysWithMeasurements[formattedDate]) {
             element.style.color = '#d3d3d3'; 
             element.style.cursor = 'default';
         } else {
@@ -2519,50 +2540,71 @@ new Calendar('#calendar', {
     clickDay: function(e) {
         if(e.events.length > 0) {
             var githubBaseUrl = 'https://spulidar.github.io/milgrau/ql-measurements/';
+            var popover = document.getElementById('mini-popover');
             
-            // Se tiver só  uma medida, abre direto
+            // If single measurement, open directly and hide popover
             if (e.events.length === 1) {
+                popover.style.display = 'none';
                 window.open(githubBaseUrl + e.events[0].url, "_blank");
             } 
-            // Se tiver mais, abre o menu pop-up
+            // Multiple measurements: open pill menu
             else {
-                var container = document.getElementById('modalButtonsContainer');
-                container.innerHTML = ''; // Limpa botões do clique anterior
+                popover.innerHTML = ''; 
 
-                // Formata a data para o título (ex: 13/02/2025)
-                var dataFormatada = e.date.toLocaleDateString('pt-BR');
-                document.getElementById('modalDateTitle').innerText = dataFormatada;
-
-                // Cria um botão para cada medida encontrada naquele dia
-                e.events.forEach(function(evento) {
-                    var url = evento.url;
-                    var periodo = "other";
-                    
-                    if (url.includes("saam")) periodo = "Morning";
-                    if (url.includes("sapm")) periodo = "Afternoon";
-                    if (url.includes("sant")) periodo = "Night";
-
-                    var btn = document.createElement('button');
-                    btn.className = 'meas-btn';
-                    btn.innerText = periodo;
-                    btn.onclick = function() {
-                        window.open(githubBaseUrl + url, "_blank"); 
-                        closeMeasurementsModal(); 
+                // 1. SMART CHRONOLOGICAL SORTING (AM -> PM -> NT)
+                e.events.sort(function(a, b) {
+                    var getPeriodWeight = function(url) {
+                        if (url.includes("saam")) return 1;
+                        if (url.includes("sapm")) return 2;
+                        if (url.includes("sant")) return 3;
+                        return 4; // Other
                     };
-                    container.appendChild(btn);
+                    return getPeriodWeight(a.url) - getPeriodWeight(b.url);
                 });
 
-                // Exibe o menu na tela por cima de tudo
-                document.getElementById('measurementsModal').style.display = 'flex';
+                // 2. CREATE MINI BUTTONS
+                e.events.forEach(function(eventItem) {
+                    var url = eventItem.url;
+                    var label = "MIX";
+                    var icon = "📌"; 
+                    
+                    if (url.includes("saam")) { label = "AM"; icon = "🌅"; }
+                    if (url.includes("sapm")) { label = "PM"; icon = "☀️"; }
+                    if (url.includes("sant")) { label = "NT"; icon = "🌙"; }
+
+                    var btn = document.createElement('button');
+                    btn.className = 'mini-btn';
+                    btn.innerHTML = `${icon} ${label}`;
+                    
+                    btn.onclick = function(clickEvent) {
+                        clickEvent.stopPropagation(); 
+                        window.open(githubBaseUrl + url, "_blank"); 
+                        popover.style.display = 'none'; 
+                    };
+                    popover.appendChild(btn);
+                });
+
+                // 3. CALCULATE POSITION (Above clicked day)
+                popover.style.display = 'flex'; 
+                
+                var rect = e.element.getBoundingClientRect();
+                var top = rect.top + window.scrollY - popover.offsetHeight - 12;
+                var left = rect.left + window.scrollX + (rect.width / 2) - (popover.offsetWidth / 2);
+
+                popover.style.top = top + 'px';
+                popover.style.left = left + 'px';
             }
         }
     }
 });
 
-// Função para fechar o menu no botão Cancelar
-function closeMeasurementsModal() {
-    document.getElementById('measurementsModal').style.display = 'none';
-}
+// Close Popover when clicking outside
+document.addEventListener('click', function(event) {
+    var popover = document.getElementById('mini-popover');
+    if (popover.style.display === 'flex' && !event.target.closest('.day') && !event.target.closest('#mini-popover')) {
+        popover.style.display = 'none';
+    }
+});
 </script>
 
 </body>
