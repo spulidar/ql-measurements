@@ -152,7 +152,7 @@ if __name__ == "__main__":
 
     for meas_id, group in df.groupby("meas_id"):
         try:
-            expected_shots = mode(group["duration"]) * mode(group["laser_freq"])
+            expected_shots = mode(group["nshots"])
             bad_cond = (group["nshots"] == 0) | (abs(group["nshots"] - expected_shots) >= 2e-3 * expected_shots)
                 
             df_bad_list.append(group.loc[bad_cond])

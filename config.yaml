@@ -3,7 +3,7 @@
 # ==========================================
 
 processing:
-  incremental: False
+  incremental: True
   apply_cloud_mask: True
   cloud_mask_multiplier: 10.0
   interactive_qa: False

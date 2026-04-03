@@ -13,6 +13,8 @@ import logging
 import numpy as np
 import pandas as pd
 import xarray as xr
+import gc
+from matplotlib import pyplot as plt
 from datetime import datetime, timedelta
 from pathlib import Path
 import warnings
@@ -45,7 +47,6 @@ def process_single_nc(args):
         
         # Use Context Manager to flush RAM automatically
         with xr.open_dataset(nc_file) as ds:
-            ds.load()
 
             # Fix altitude coordinates
             num_bins = ds.sizes['range']
@@ -84,18 +85,33 @@ def process_single_nc(args):
                     rc_error = ds['Range_Corrected_Signal_Error'].sel(channel=channel_name)
 
                     for max_altitude in altitude_ranges:
-                        sig_slice = rc_signal.where(rc_signal['altitude'] <= max_altitude, drop=True)
-                        err_slice = rc_error.where(rc_error['altitude'] <= max_altitude, drop=True)
 
-                        # Call the viz_utils factory injecting the metadata!
+                        sig_slice = rc_signal.sel(altitude=slice(0, max_altitude)).compute()
+                        err_slice = rc_error.sel(altitude=slice(0, max_altitude)).compute()
+
+                        # Call the viz_utils factory injecting the metadata
                         plot_quicklook(
                             sig_slice, err_slice, max_altitude, channel_name, 
                             ds, output_folder, file_name_prefix, config, root_dir,
                             pbl_km, cpt_km, lrt_km
                         )
+                        
+                        # Aggressive inner-loop memory cleanup
+                        del sig_slice, err_slice
+                        plt.close('all')
+                        gc.collect()
 
             logger.info(f"[{file_name_prefix}] Generating Global Mean RCS comparative profile...")
+            
+            # Compute only the mean profile array into memory, never the whole dataset
             plot_global_mean_rcs(ds, output_folder, file_name_prefix, config, root_dir)
+
+        # --- RAM CLEANUP (GARBAGE COLLECTION) ---
+        # Force Matplotlib to destroy any unclosed figure canvases in the background
+        plt.close('all')
+        
+        # Manually trigger Python's garbage collector to free up memory immediately
+        gc.collect()
 
         return f"[OK] All plots generated for {file_name_prefix}"
 

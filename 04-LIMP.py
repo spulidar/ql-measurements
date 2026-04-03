@@ -51,63 +51,154 @@ def upload_to_r2(s3_client, bucket_name, local_file_path, cloud_file_key, logger
 # HTML DASHBOARD GENERATOR
 # ==========================================
 def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid_alts, has_global_mean, mean_rcs_file, year, cloud_public_url):
-    """Generates the static HTML dashboard embedding cloud images."""
-    default_ch = valid_channels[0] if valid_channels else ""
-    default_alt = valid_alts[0] if valid_alts else ""
+    """Generates the static HTML dashboard embedding cloud images (Compact Light Theme)."""
     
-    channel_buttons = "".join([f'<button class="tab-btn ch-btn" onclick="setChannel(\'{ch}\', this)">{ch.replace("_", " ")}</button>\n' for ch in valid_channels])
+    # --- SMART DEFAULT SELECTION ---
+    # Try to find a 532nm analog channel as default. If not found, fallback to the first available.
+    default_ch = next((ch for ch in valid_channels if "532" in ch and "an" in ch), valid_channels[0] if valid_channels else "")
+    # Try to find 15km as the default altitude. If not found, fallback to the first available.
+    default_alt = next((alt for alt in valid_alts if "15" == alt or "15.0" == alt), valid_alts[0] if valid_alts else "")
+    
+    # Physics colored buttons adapted for Light Theme
+    channel_buttons = ""
+    for ch in valid_channels:
+        color_class = "btn-default"
+        if "1064" in ch: color_class = "btn-ir"
+        elif "532" in ch: color_class = "btn-vis"
+        elif "355" in ch: color_class = "btn-uv"
+        channel_buttons += f'<button class="tab-btn ch-btn {color_class}" onclick="setChannel(\'{ch}\', this)">{ch.replace("_", " ")}</button>\n'
+        
     altitude_buttons = "".join([f'<button class="tab-btn alt-btn" onclick="setAltitude(\'{alt}\', this)">{alt} km</button>\n' for alt in valid_alts])
 
-    global_tab_style = "display: inline-block;" if has_global_mean else "display: none;"
+    global_tab_style = "display: flex;" if has_global_mean else "display: none;"
     cloud_base_url = f"{cloud_public_url}/{year}"
 
     html_content = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Lidar Measurements - {date_title}</title>
+  <title>SPU Lidar | {date_title}</title>
   <style type="text/css">
-    html, body {{ background: #f4f4f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; text-align: center; }}
-    h2 {{ color: #333; margin-top: 20px; }}
-    .subtitle {{ font-size: 18px; font-weight: normal; color: #666; display: block; margin-top: 5px; }}
-    .dashboard {{ max-width: 100%; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; align-items: center; }}
-    .main-tabs {{ margin-bottom: 25px; }}
-    .main-tab-btn {{ background: transparent; border: none; font-size: 18px; font-weight: bold; color: #777; cursor: pointer; padding: 10px 20px; margin: 0 10px; border-bottom: 3px solid transparent; transition: color 0.3s; }}
-    .main-tab-btn:hover {{ color: #0056b3; }}
-    .main-tab-btn.active {{ color: #0056b3; border-bottom: 3px solid #0056b3; }}
-    .controls {{ display: flex; justify-content: center; gap: 40px; margin-bottom: 25px; flex-wrap: wrap; }}
-    .tab-group {{ background: white; padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
-    .tab-group h3 {{ margin: 0 0 15px 0; font-size: 16px; color: #555; text-transform: uppercase; letter-spacing: 1px; }}
-    .tab-btn {{ background: #e0e0e0; border: none; padding: 10px 20px; margin: 0 5px; border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; color: #333; transition: background 0.2s, transform 0.1s; }}
-    .tab-btn:hover {{ background: #d0d0d0; transform: translateY(-2px); }}
-    .tab-btn.active {{ background: #0056b3; color: white; box-shadow: 0 4px 8px rgba(0,86,179,0.3); }}
-    .image-display {{ display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }}
-    .image-card {{ background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); width: 100%; max-width: 80%; transition: max-width 0.4s ease-in-out; }}
-    .image-card img {{ width: 100%; height: auto; cursor: zoom-in; border-radius: 4px; display: block; }}
-    #myModal {{ display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.85); }}
-    .modal-content {{ margin: auto; display: block; width: 95%; max-width: 1600px; margin-top: 2%; animation: zoom 0.3s ease-in-out; }}
-    @keyframes zoom {{ from {{transform:scale(0)}} to {{transform:scale(1)}} }}
+    /* Compact Light Theme matching Google Sites */
+    html, body {{ 
+        background: #f0f2f5; 
+        color: #333; 
+        font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; 
+        margin: 0; 
+        padding: 0; 
+        height: 100vh;
+        overflow: hidden; /* Remove scroll da pagina inteira */
+    }}
+    
+    /* Top Menu Bar */
+    .top-bar {{ 
+        background: #1a1a1a; 
+        color: #fff; 
+        padding: 10px 25px; 
+        display: flex; 
+        justify-content: space-between; 
+        align-items: center; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+        height: 40px;
+    }}
+    .top-bar h2 {{ margin: 0; font-size: 18px; font-weight: 500; letter-spacing: 1px; }}
+    .top-bar .date {{ font-weight: 700; color: #4fc3f7; margin-left: 5px; }}
+    .metadata {{ font-size: 12px; color: #aaa; font-family: monospace; display: flex; gap: 15px; }}
+    
+    /* Toolbar (Mode + Controls) */
+    .toolbar {{ 
+        background: #ffffff; 
+        border-bottom: 1px solid #ddd; 
+        padding: 8px 25px; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        flex-wrap: wrap; 
+        gap: 30px; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05); 
+        height: 45px;
+    }}
+    
+    .control-group {{ display: flex; align-items: center; gap: 8px; }}
+    .control-group h3 {{ margin: 0; font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: 1px; margin-right: 5px; }}
+    
+    /* Toolbar Buttons */
+    .main-mode-btn {{ background: transparent; border: none; font-size: 14px; font-weight: 600; color: #777; cursor: pointer; padding: 6px 12px; border-bottom: 3px solid transparent; transition: 0.2s; }}
+    .main-mode-btn:hover {{ color: #111; }}
+    .main-mode-btn.active {{ color: #0056b3; border-bottom: 3px solid #0056b3; }}
+    
+    .tab-btn {{ background: #f8f9fa; border: 1px solid #ccc; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; color: #555; transition: all 0.2s ease; font-family: monospace; }}
+    .tab-btn:hover {{ background: #e2e6ea; color: #111; }}
+    
+    /* Active Physics Colors */
+    .btn-ir.active {{ background: #d32f2f; color: #fff; border-color: #b71c1c; box-shadow: 0 2px 4px rgba(211,47,47,0.3); }}
+    .btn-vis.active {{ background: #2e7d32; color: #fff; border-color: #1b5e20; box-shadow: 0 2px 4px rgba(46,125,50,0.3); }}
+    .btn-uv.active {{ background: #6a1b9a; color: #fff; border-color: #4a148c; box-shadow: 0 2px 4px rgba(106,27,154,0.3); }}
+    .btn-default.active {{ background: #0056b3; color: #fff; border-color: #004085; }}
+    .alt-btn.active {{ background: #546e7a; color: #fff; border-color: #37474f; }}
+
+    /* Image Display Area (Fills remaining height perfectly) */
+    .image-container {{ 
+        padding: 15px; 
+        text-align: center; 
+        /* 100vh (tela inteira) menos o topo (~135px) = Imagem perfeita sem scroll */
+        height: calc(100vh - 145px); 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+    }}
+    
+    #main-display {{ 
+        max-height: 100%; 
+        max-width: 100%; 
+        object-fit: contain; 
+        box-shadow: 0 6px 16px rgba(0,0,0,0.15); 
+        background: #fff; 
+        cursor: zoom-in; 
+        transition: opacity 0.2s ease-in-out; 
+    }}
+    
+    /* Fullscreen Modal */
+    #myModal {{ display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.9); backdrop-filter: blur(5px); }}
+    .modal-close {{ position: absolute; top: 15px; right: 30px; color: #bbb; font-size: 40px; font-weight: 300; cursor: pointer; }}
+    .modal-close:hover {{ color: #fff; }}
+    .modal-content {{ margin: auto; display: block; max-width: 98%; max-height: 95vh; margin-top: 1%; animation: zoom 0.2s ease-out; }}
+    @keyframes zoom {{ from {{transform:scale(0.95); opacity:0}} to {{transform:scale(1); opacity:1}} }}
   </style>
 </head>
 <body>
-  <h2>Lidar Measurements<br><span class="subtitle">{date_title}</span></h2>
-  
-  <div class="dashboard">
-      <div class="main-tabs">
-          <button class="main-tab-btn active" id="tab-quicklooks" onclick="setMode('quicklooks')">Quicklooks</button>
-          <button class="main-tab-btn" id="tab-resumo" style="{global_tab_style}" onclick="setMode('resumo')">Global Summary</button>
-      </div>
-      <div id="controls-panel" class="controls">
-          <div class="tab-group"><h3>CHANNEL</h3>{channel_buttons}</div>
-          <div class="tab-group"><h3>ALTITUDE</h3>{altitude_buttons}</div>
-      </div>
-      <div class="image-display">
-          <div class="image-card" id="img-card">
-              <img id="main-display" src="{cloud_base_url}/Quicklook_{prefix}_{default_ch}_{default_alt}km.webp" onclick="openModal(this.src)" alt="Lidar Image">
-          </div>
+
+  <div class="top-bar">
+      <h2>SPU LIDAR STATION | <span class="date">{date_title}</span></h2>
+      <div class="metadata">
+          <span>LAT: 23.56°S</span>
+          <span>LON: 46.73°W</span>
+          <span>ELEV: 744m</span>
       </div>
   </div>
-  <div id="myModal" onclick="closeModal()"><img class="modal-content" id="img01"></div>
+  
+  <div class="toolbar">
+      <div class="control-group">
+          <button class="main-mode-btn active" id="tab-quicklooks" onclick="setMode('quicklooks')">RCS Maps</button>
+          <button class="main-mode-btn" id="tab-resumo" style="{global_tab_style}" onclick="setMode('resumo')">Atmospheric Profiles</button>
+      </div>
+      
+      <div class="control-group" id="controls-panel">
+          <h3 style="margin-left: 15px; border-left: 2px solid #ddd; padding-left: 15px;">Wavelength</h3>
+          {channel_buttons}
+          <h3 style="margin-left: 10px;">Range</h3>
+          {altitude_buttons}
+      </div>
+  </div>
+  
+  <div class="image-container">
+      <img id="main-display" src="{cloud_base_url}/Quicklook_{prefix}_{default_ch}_{default_alt}km.webp" onclick="openModal(this.src)" alt="Lidar Data Image">
+  </div>
+  
+  <div id="myModal">
+    <span class="modal-close" onclick="closeModal()">&times;</span>
+    <img class="modal-content" id="img01">
+  </div>
 
   <script>
     var currentChannel = "{default_ch}";
@@ -115,6 +206,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     var prefix = "{prefix}";
     var currentMode = "quicklooks";
     var cloudBaseUrl = "{cloud_base_url}";
+    var imgElement = document.getElementById("main-display");
 
     document.addEventListener("DOMContentLoaded", function() {{
         var firstCh = document.querySelector(".ch-btn");
@@ -124,32 +216,35 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     }});
 
     function updateImage() {{
-        var imgElement = document.getElementById("main-display");
-        if (currentMode === "quicklooks") {{
-            imgElement.src = cloudBaseUrl + "/Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
-        }} else {{
-            imgElement.src = cloudBaseUrl + "/{mean_rcs_file}";
-        }}
+        imgElement.style.opacity = 0.4;
+        setTimeout(() => {{
+            if (currentMode === "quicklooks") {{
+                imgElement.src = cloudBaseUrl + "/Quicklook_" + prefix + "_" + currentChannel + "_" + currentAltitude + "km.webp";
+            }} else {{
+                imgElement.src = cloudBaseUrl + "/{mean_rcs_file}";
+            }}
+        }}, 100);
     }}
+
+    imgElement.onload = function() {{ imgElement.style.opacity = 1; }};
 
     function setMode(mode) {{
         currentMode = mode;
         document.getElementById("tab-quicklooks").classList.remove("active");
         document.getElementById("tab-resumo").classList.remove("active");
-        var imgCard = document.getElementById("img-card");
+        
         if (mode === "quicklooks") {{
             document.getElementById("tab-quicklooks").classList.add("active");
             document.getElementById("controls-panel").style.display = "flex"; 
-            imgCard.style.maxWidth = "80%"; 
         }} else {{
             document.getElementById("tab-resumo").classList.add("active");
             document.getElementById("controls-panel").style.display = "none"; 
-            imgCard.style.maxWidth = "50%"; 
         }}
         updateImage();
     }}
 
     function setChannel(ch, btnElement) {{
+        if(currentChannel === ch && currentMode === "quicklooks") return; 
         currentChannel = ch;
         document.querySelectorAll(".ch-btn").forEach(btn => btn.classList.remove("active"));
         btnElement.classList.add("active");
@@ -157,6 +252,7 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
     }}
 
     function setAltitude(alt, btnElement) {{
+        if(currentAltitude === alt && currentMode === "quicklooks") return;
         currentAltitude = alt;
         document.querySelectorAll(".alt-btn").forEach(btn => btn.classList.remove("active"));
         btnElement.classList.add("active");
@@ -165,8 +261,11 @@ def generate_html_dashboard(html_path, prefix, date_title, valid_channels, valid
 
     var modal = document.getElementById("myModal");
     var modalImg = document.getElementById("img01");
+    
     function openModal(src) {{ modal.style.display = "block"; modalImg.src = src; }}
     function closeModal() {{ modal.style.display = "none"; }}
+    window.onclick = function(event) {{ if (event.target == modal) closeModal(); }}
+    document.addEventListener('keydown', function(event) {{ if (event.key === "Escape") closeModal(); }});
   </script>
 </body>
 </html>
@@ -234,12 +333,14 @@ if __name__ == "__main__":
     logger = setup_logger("LIMP", config['directories']['log_dir'])
     logger.info("=== Starting LIMP (Cloudflare R2 Upload & HTML Generation) ===")
 
+    # ================
+    # REBUILD SWITCH
+    # ================
+    REBUILD_HTML_ONLY = False 
+
     # Setup directories
     root_dir = os.getcwd() 
-    # FIX 1: Corrigido de '02-processed_data' para 'processed_data'
     base_data_folder = os.path.join(root_dir, config['directories']['processed_data'])
-    
-    # Assumindo que a chave para a saída do site é 'site_output' no yaml
     base_site_folder = os.path.join(root_dir, config.get('directories', {}).get('site_output', 'ql-measurements'))
     ensure_directories(base_site_folder)
     
@@ -259,7 +360,6 @@ if __name__ == "__main__":
     for img_path in all_images:
         img_name = os.path.basename(img_path)
         
-        # FIX 2 & 3: Lógica segura de parsing e unificação do "GlobalMeanRCS_"
         if img_name.startswith("Quicklook_"):
             parts = img_name.replace(".webp", "").split("_")
             if len(parts) >= 5:
@@ -288,6 +388,10 @@ if __name__ == "__main__":
 
     # 3. Process Uploads and HTML
     processed_days = 0
+    
+    if REBUILD_HTML_ONLY:
+        logger.info("REBUILD MODE ACTIVE: Overwriting HTMLs. Cloudflare uploads are disabled.")
+        
     for prefix, data in measurements.items():
         try:
             year = prefix[:4]
@@ -300,15 +404,18 @@ if __name__ == "__main__":
         ensure_directories(site_year_folder)
         html_path = os.path.join(site_year_folder, f"{prefix}_Dashboard.html")
 
-        if incremental and os.path.exists(html_path):
+        if incremental and os.path.exists(html_path) and not REBUILD_HTML_ONLY:
             logger.debug(f"  -> [SKIPPED] Dashboard already exists for: {prefix}")
             continue
             
-        logger.info(f"  -> [UPLOADING] Sending {len(data['files'])} images to Cloudflare R2 for {prefix}...")
-        for img_path in data['files']:
-            filename = os.path.basename(img_path)
-            cloud_path = f"{year}/{filename}"
-            upload_to_r2(s3_client, bucket_name, img_path, cloud_path, logger)
+        if not REBUILD_HTML_ONLY:
+            logger.info(f"  -> [UPLOADING] Sending {len(data['files'])} images to Cloudflare R2 for {prefix}...")
+            for img_path in data['files']:
+                filename = os.path.basename(img_path)
+                cloud_path = f"{year}/{filename}"
+                upload_to_r2(s3_client, bucket_name, img_path, cloud_path, logger)
+        else:
+            logger.info(f"  -> [HTML REBUILD] Regenerating dashboard for {prefix}...")
             
         valid_channels = sorted(list(data['channels']))
         valid_alts = sorted(list(data['alts']), key=lambda x: float(x) if x.replace('.','',1).isdigit() else 0)
@@ -318,10 +425,12 @@ if __name__ == "__main__":
                 html_path, prefix, date_str, valid_channels, valid_alts, 
                 data['has_global_mean'], data['mean_rcs_filename'], year, cloud_public_url
             )
-            logger.info(f"  -> [OK] HTML Dashboard created locally: {prefix}")
             processed_days += 1
 
-    logger.info(f"=== LIMP Finished! {processed_days} new dashboards generated. ===")
+    if REBUILD_HTML_ONLY:
+        logger.info(f"=== HTML REBUILD Finished! {processed_days} dashboards updated. ===")
+    else:
+        logger.info(f"=== LIMP Finished! {processed_days} new dashboards generated. ===")
     
     # 4. Sync Calendar
     update_calendar(base_site_folder, logger)

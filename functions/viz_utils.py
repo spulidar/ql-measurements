@@ -86,22 +86,37 @@ def plot_quicklook(data_slice, error_slice, max_altitude, channel_name, ds, outp
     ax0 = plt.subplot(gs[0])
     
     apply_cloud_mask = config.get("processing", {}).get("apply_cloud_mask", True)
+    
     if apply_cloud_mask:
         multiplier = config.get("processing", {}).get("cloud_mask_multiplier", 10.0)
         dynamic_threshold = calculate_dynamic_cloud_threshold(data_slice, multiplier=multiplier)
-        rcs_aerosol = data_slice.where(data_slice < dynamic_threshold)
-        rcs_clouds = data_slice.where(data_slice >= dynamic_threshold)
-        plot = rcs_aerosol.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, add_colorbar=False, ax=ax0, add_labels=False)
-        rcs_clouds.plot(x='time', y='altitude', cmap=ListedColormap(['white']), add_colorbar=False, ax=ax0, add_labels=False)
+        
+        raw_vals = data_slice.values
+        
+        aerosol_mask = np.where(raw_vals < dynamic_threshold, raw_vals, np.nan)
+        cloud_mask = np.where(raw_vals >= dynamic_threshold, raw_vals, np.nan)
+        
+        rcs_aerosol = data_slice.copy(data=aerosol_mask)
+        rcs_clouds = data_slice.copy(data=cloud_mask)
+
+        plot = rcs_aerosol.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, 
+                                add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
+        
+        rcs_clouds.plot(x='time', y='altitude', cmap=ListedColormap(['white']), 
+                        add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
+                        
+        del raw_vals, aerosol_mask, cloud_mask, rcs_aerosol, rcs_clouds
     else:
-        plot = data_slice.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, add_colorbar=False, ax=ax0, add_labels=False)
+        # rasterized=True prevents SVG/PDF vector explosion in high-res datasets
+        plot = data_slice.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, 
+                               add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
     
     ax0.set_title(meas_title, fontsize=15, fontweight="bold", loc='center')
     ax0.set_xlabel('Time (UTC)', fontsize=13, fontweight="bold")
     ax0.set_ylabel('Altitude (km a.g.l.)', fontsize=13, fontweight="bold")
     ax0.set_ylim(0.16 if "AN" in pretty_channel else 0.5, max_altitude)
     ax0.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-
+    
     # ---------------------------------------------------------
     # SUBPLOT 1: Mean Profile & Atmospheric Boundaries
     # ---------------------------------------------------------

@@ -11,6 +11,7 @@ import os
 import pandas as pd
 import numpy as np
 import xarray as xr
+import gc
 from datetime import datetime, timezone
 from pathlib import Path
 import warnings
@@ -51,7 +52,6 @@ def process_single_file(args):
         
         # Use Context Manager to strictly protect RAM and avoid memory leaks
         with xr.open_dataset(nc_path) as ds:
-            ds.load()
 
             rename_dict = {}
             if 'channels' in ds.dims: rename_dict['channels'] = 'channel'
@@ -97,11 +97,18 @@ def process_single_file(args):
             logger.info(f"[{stem}] Fetching Wyoming Radiosonde data...")
             df_radio = fetch_wyoming_radiosonde(meas_dt, station_id, logger)
 
-            corrected_list, rcs_list = [], []
-            err_corrected_list, err_rcs_list = [], []
             pbl_list = []
 
             logger.info(f"[{stem}] Applying physics corrections and propagating errors for {len(channel_names_scc)} channels...")
+
+            n_time = raw.sizes["time"]
+            n_chan = len(channel_names_scc)
+            n_range = raw.sizes["range"]
+            
+            final_corrected = np.empty((n_time, n_chan, n_range), dtype=np.float32)
+            final_err_corrected = np.empty((n_time, n_chan, n_range), dtype=np.float32)
+            final_rcs = np.empty((n_time, n_chan, n_range), dtype=np.float32)
+            final_err_rcs = np.empty((n_time, n_chan, n_range), dtype=np.float32)
 
             for ch_i, ch_name in enumerate(channel_names_scc):
                 sig = raw.isel(channel=ch_i).copy()
@@ -112,7 +119,9 @@ def process_single_file(args):
                 bg_high = float(bg_high_arr[ch_i]) if bg_high_arr is not None else 29999.0
                 bg_mask = (z_da >= bg_low) & (z_da <= bg_high)
 
-                if is_photon:
+                is_elastic = any(wl in ch_name for wl in ["355", "532", "1064"])
+                
+                if not is_photon:
                     if np.nanmax(sig) > 1000: sig = sig / (shots * bin_time_us)
                     N_photons = xr.where(sig * shots * bin_time_us > 0, sig * shots * bin_time_us, 0)
                     err_raw = np.sqrt(N_photons) / (shots * bin_time_us)
@@ -152,26 +161,28 @@ def process_single_file(args):
                 err_rcs = err_c * (z_da**2)
                 
                 # --- DETECT PBL ON ANALOG CHANNELS ---
-                if not is_photon:
+                if not is_photon and is_elastic:
                     pbl_km = calculate_pbl_height_gradient(rcs.mean(dim="time").values, z, min_search_m=500.0, max_search_m=4000.0)
                     if not np.isnan(pbl_km):
                         pbl_list.append(pbl_km)
                         logger.info(f"  -> [{stem}] PBL gradient detected at {pbl_km:.2f} km for analog channel {ch_name}.")
 
-                corrected_list.append(sig_c.assign_coords(channel=ch_name))
-                err_corrected_list.append(err_c.assign_coords(channel=ch_name))
-                rcs_list.append(rcs.assign_coords(channel=ch_name))
-                err_rcs_list.append(err_rcs.assign_coords(channel=ch_name))
+
+                final_corrected[:, ch_i, :] = sig_c.values.astype(np.float32)
+                final_err_corrected[:, ch_i, :] = err_c.values.astype(np.float32)
+                final_rcs[:, ch_i, :] = rcs.values.astype(np.float32)
+                final_err_rcs[:, ch_i, :] = err_rcs.values.astype(np.float32)
+
+                del sig, sig_dt, err_dt, sig_shift, err_shift, sig_c, err_c, rcs, err_rcs
+                gc.collect()
 
             logger.info(f"[{stem}] Merging tensors and saving Level 1 NetCDF...")
             
-            final_corrected = xr.concat(corrected_list, dim="channel").transpose("time", "channel", "range")
-            final_err_corrected = xr.concat(err_corrected_list, dim="channel").transpose("time", "channel", "range")
-            final_rcs = xr.concat(rcs_list, dim="channel").transpose("time", "channel", "range")
-            final_err_rcs = xr.concat(err_rcs_list, dim="channel").transpose("time", "channel", "range")
+            del raw
+            gc.collect()
 
             attrs_common = dict(ds.attrs)
-            attrs_common["processing_level"] = "Level 1: PC->MHz, Dead time, Dark Current, Shift, Background, Error Propagation, PBL, Tropopause"
+            attrs_common["processing_level"] = "Level 1: PC->MHz, DT, DC, Shift, Background, Error Propagation, PBL, Tropopause"
             attrs_common["history"] = f"{ds.attrs.get('history', '')}\nProcessed with MILGRAU LIPANCORA on {datetime.now(timezone.utc).isoformat()} UTC"
 
             # --- INJECT PBL & TROPOPAUSE METADATA ---
@@ -206,14 +217,14 @@ def process_single_file(args):
             coords = {"time": ds["time"], "channel": ("channel", np.array(channel_names_scc)), "range": ("range", np.float32(z))}
 
             corrected_ds = xr.Dataset(
-                {"Corrected_Lidar_Data": (("time", "channel", "range"), final_corrected.values),
-                 "Corrected_Lidar_Data_Error": (("time", "channel", "range"), final_err_corrected.values)},
+                {"Corrected_Lidar_Data": (("time", "channel", "range"), final_corrected),
+                 "Corrected_Lidar_Data_Error": (("time", "channel", "range"), final_err_corrected)},
                 coords=coords, attrs=attrs_common
             )
 
             rcs_ds = xr.Dataset(
-                {"Range_Corrected_Signal": (("time", "channel", "range"), final_rcs.values),
-                 "Range_Corrected_Signal_Error": (("time", "channel", "range"), final_err_rcs.values)},
+                {"Range_Corrected_Signal": (("time", "channel", "range"), final_rcs),
+                 "Range_Corrected_Signal_Error": (("time", "channel", "range"), final_err_rcs)},
                 coords=coords, attrs=attrs_common
             )
             
