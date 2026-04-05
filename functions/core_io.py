@@ -13,6 +13,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
 from siphon.simplewebservice.wyoming import WyomingUpperAir
+import urllib.request
+import json
+from typing import Dict, Optional
 
 def load_config(config_path="config.yaml"):
     """
@@ -179,4 +182,43 @@ def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="
         
     except Exception as e:
         logger.warning(f"  -> [RADIOSONDE ERROR] Failed to fetch data from Wyoming via Siphon: {e}")
+        return None
+
+def fetch_surface_weather(dt_utc: datetime, lat: float, lon: float) -> Optional[Dict[str, float]]:
+    """
+    Fetches historical surface weather from the Open-Meteo Archive API.
+    Returns a dictionary with temperature, pressure, humidity, cloud cover, and wind.
+    """
+    try:
+        # Format time to ISO 8601 hourly format required by Open-Meteo
+        target_time = dt_utc.strftime("%Y-%m-%dT%H:00")
+        target_date = dt_utc.strftime("%Y-%m-%d")
+        
+        # ERA5 Archive API URL with extended meteorological variables
+        url = (
+            f"https://archive-api.open-meteo.com/v1/archive?"
+            f"latitude={lat}&longitude={lon}&"
+            f"start_date={target_date}&end_date={target_date}&"
+            f"hourly=temperature_2m,surface_pressure,relative_humidity_2m,cloud_cover,wind_speed_10m"
+        )
+        
+        req = urllib.request.Request(url, headers={'User-Agent': 'MILGRAU-Lidar-Bot/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+        times = data.get('hourly', {}).get('time', [])
+        
+        if target_time in times:
+            idx = times.index(target_time)
+            return {
+                'temperature_c': data['hourly']['temperature_2m'][idx],
+                'pressure_hpa': data['hourly']['surface_pressure'][idx],
+                'relative_humidity_percent': data['hourly']['relative_humidity_2m'][idx],
+                'cloud_cover_percent': data['hourly']['cloud_cover'][idx],
+                'wind_speed_kmh': data['hourly']['wind_speed_10m'][idx]
+            }
+            
+        return None
+    except Exception:
+        # Fails silently to allow fallback values in the main pipeline
         return None
