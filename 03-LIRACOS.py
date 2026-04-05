@@ -3,13 +3,13 @@ MILGRAU Suite - Level 1 Visualization (LIRACOS)
 Orchestrates the rendering of Lidar Range Corrected Signal (RCS) colormaps 
 and mean profiles. It reads Level 1 NetCDF files, extracts PBL and Tropopause 
 metadata, and offloads the plotting tasks to the core visualization utilities.
-Optimized for sequential, low-RAM execution.
 
 @author: Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo, Luisa Mello
 """
 
 import os
 import logging
+import traceback
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -45,18 +45,13 @@ def process_single_nc(args):
 
         logger.info(f"[{file_name_prefix}] Loading Level 1 data and adjusting spatial/time axes...")
         
-        # Use Context Manager to flush RAM automatically
         with xr.open_dataset(nc_file) as ds:
-
-            # Fix altitude coordinates
-            num_bins = ds.sizes['range']
-            vert_res = config['physics']['vertical_resolution_m']
-            new_altitude_km = np.arange(0, num_bins * vert_res, vert_res) / 1000.0
+            
+            new_altitude_km = ds['range'].values / 1000.0
             
             ds = ds.assign_coords(altitude=("range", new_altitude_km))
             ds = ds.swap_dims({'range': 'altitude'})
-
-            # Fix time coordinates
+            
             try:
                 dt_in_str = f"{ds.attrs['RawData_Start_Date']}{str(ds.attrs['RawData_Start_Time_UT']).zfill(6)}"
                 dt_end_str = f"{ds.attrs['RawData_Start_Date']}{str(ds.attrs['RawData_Stop_Time_UT']).zfill(6)}"
@@ -67,13 +62,14 @@ def process_single_nc(args):
                 time_array = pd.date_range(start=dt_in, end=dt_end, periods=ds.sizes['time'])
                 ds = ds.assign_coords(time=time_array)
             except Exception as e:
-                logger.warning(f"[{file_name_prefix}] Could not build precise time array: {e}")
+                logger.warning(f"  -> [{file_name_prefix}] Could not build precise time array: {e}")
 
             # --- EXTRACT METADATA (PBL & TROPOPAUSE) ---
             pbl_km = float(ds.attrs.get("pbl_height_km", -999.0))
             cpt_km = float(ds.attrs.get("tropopause_cpt_km", -999.0))
             lrt_km = float(ds.attrs.get("tropopause_lrt_km", -999.0))
-            logger.info(f"[{file_name_prefix}] Found Metadata -> PBL: {pbl_km}km | CPT: {cpt_km}km | LRT: {lrt_km}km")
+            
+            logger.info(f"  -> [{file_name_prefix}] Metadata -> PBL: {pbl_km:.2f} km | CPT: {cpt_km:.2f} km | LRT: {lrt_km:.2f} km")
 
             channels_to_plot = config['visualization']['channels_to_plot']
             altitude_ranges = config['visualization']['altitude_ranges_km']
@@ -107,16 +103,14 @@ def process_single_nc(args):
             plot_global_mean_rcs(ds, output_folder, file_name_prefix, config, root_dir)
 
         # --- RAM CLEANUP (GARBAGE COLLECTION) ---
-        # Force Matplotlib to destroy any unclosed figure canvases in the background
         plt.close('all')
-        
-        # Manually trigger Python's garbage collector to free up memory immediately
         gc.collect()
 
         return f"[OK] All plots generated for {file_name_prefix}"
 
     except Exception as e:
-        return f"[FAILED] Error plotting {os.path.basename(nc_file)}: {e}"
+        error_details = traceback.format_exc()
+        return f"[FAILED] Error plotting {os.path.basename(nc_file)}:\n{error_details}"
 
 # ==========================================
 # MAIN ORCHESTRATOR
@@ -140,7 +134,7 @@ if __name__ == "__main__":
     process_args = [(str(f), config, root_dir) for f in nc_files]
     
     success_count = 0
-    # Sequential loop for rock-solid memory stability (No ProcessPoolExecutor!)
+
     for args in process_args:
         result = process_single_nc(args)
         if "[OK]" in result or "[SKIPPED]" in result:
