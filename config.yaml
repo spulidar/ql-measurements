@@ -20,8 +20,8 @@ physics:
   speed_of_light: 299792458.0
 
   # Station Location (IPEN/USP - São Paulo)
-  station_latitude: -23.5615
-  station_longitude: -46.7383
+  latitude: -23.5615
+  longitude: -46.7383
   
   # Default surface weather for Level 0 NetCDF SCC format (Fallback)
   default_surface_temp_c: 25.0
