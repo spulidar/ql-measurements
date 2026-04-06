@@ -6,7 +6,7 @@ processing:
   incremental: false
   apply_cloud_mask: true
   cloud_mask_multiplier: 10.0
-  interactive_qa: false
+  interactive_qa: true                # Set to true to show pop-up plots (Gluing/Molecular fit)
   save_intermediate_corrected: true
 
 directories:
@@ -84,7 +84,6 @@ radiosonde:
   fallback_to_standard: true          # Use US Standard Atmosphere if download fails
   
 inversion:
-  interactive_qa: false                # Set to true to show pop-up plots (Gluing/Molecular fit)
   monte_carlo_iterations: 100         # Number of perturbations for error propagation
   
   molecular_fit:
@@ -98,8 +97,8 @@ inversion:
     intercept_threshold: 0.5
     gaussian_threshold: 0.1
     minmax_threshold: 0.5
-    search_min_idx: 200               # 200 * 7.5m = 1.5 km
-    search_max_idx: 2000              # 2000 * 7.5m = 15 km
+    search_min_idx: 400               # 400 * 7.5m = 3 km
+    search_max_idx: 1000              # 1000 * 7.5m = 7.5 km
 
 
   # Mean Aerosol Lidar Ratios (LR) per wavelength and month (01 to 12)

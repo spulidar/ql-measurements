@@ -9,7 +9,6 @@ and strict physical calibration (Molecular & Gluing).
 
 import os
 import gc
-import logging
 import traceback
 import numpy as np
 import xarray as xr
@@ -35,7 +34,6 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # ==========================================
 def process_level2_file(args):
     nc_path, config, root_dir = args
-    logger = logging.getLogger("LEBEAR")
     
     try:
         stem = Path(nc_path).stem.replace("_level1_rcs", "")
@@ -245,7 +243,7 @@ if __name__ == "__main__":
         logger.warning(f"No Level 1 NetCDF data found in '{input_dir}'. Exiting.")
         exit()
 
-    interactive_qa = config.get('inversion', {}).get('interactive_qa', True)
+    interactive_qa = config.get('processing', {}).get('interactive_qa', True)
     logger.info(f"Found {len(files)} Level 1 files. (Interactive QA: {interactive_qa})")
 
     success_count = 0

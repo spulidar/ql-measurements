@@ -261,7 +261,7 @@ def plot_gluing_qa(alt_km, lower_sig, upper_sig, glued_sig, best_idx, window_siz
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(os.path.join(save_dir, f'QA_Gluing_{prefix}_{channel_base_name.replace(" ", "_")}.webp'), dpi=120)
     
-    if config.get('inversion', {}).get('interactive_qa', True): plt.show(block=True)
+    if config.get('processing', {}).get('interactive_qa', True): plt.show(block=True)
     plt.close(fig)
 
 def plot_molecular_qa(alt_km, rcs, simulated_mol, fit_min_km, fit_max_km, config, channel_name, ds, root_dir, save_dir, prefix):
@@ -286,7 +286,7 @@ def plot_molecular_qa(alt_km, rcs, simulated_mol, fit_min_km, fit_max_km, config
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(os.path.join(save_dir, f'QA_Molecular_{prefix}_{channel_name.replace(" ", "_")}.webp'), dpi=120)
     
-    if config.get('inversion', {}).get('interactive_qa', True): plt.show(block=True)
+    if config.get('processing', {}).get('interactive_qa', True): plt.show(block=True)
     plt.close(fig)
 
 
@@ -347,6 +347,6 @@ def plot_kfs_results(alt_km, beta_mean, beta_std, ext_mean, ext_std, config, cha
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(os.path.join(save_dir, f'L2_OpticalProps_{prefix}_{channel_name.replace(" ", "_")}.webp'), dpi=120)
     
-    if config.get('inversion', {}).get('interactive_qa', True): 
+    if config.get('processing', {}).get('interactive_qa', True): 
         plt.show(block=True)
     plt.close(fig)

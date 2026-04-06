@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 import warnings
 import traceback 
-import logging
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -33,7 +32,6 @@ def process_single_file(args):
     c_speed = config['physics']['speed_of_light']
     
     station_id = config.get('location', {}).get('station_id', '83779')
-    logger = logging.getLogger("LIPANCORA")
 
     try:
         stem = Path(nc_path).stem

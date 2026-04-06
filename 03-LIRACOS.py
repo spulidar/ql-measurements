@@ -8,7 +8,6 @@ metadata, and offloads the plotting tasks to the core visualization utilities.
 """
 
 import os
-import logging
 import traceback
 import numpy as np
 import pandas as pd
@@ -25,12 +24,9 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 from functions.core_io import load_config, setup_logger, ensure_directories
 from functions.viz_utils import plot_quicklook, plot_global_mean_rcs
 
-# ==========================================
-# SEQUENTIAL WORKER FUNCTION
-# ==========================================
+
 def process_single_nc(args):
     nc_file, config, root_dir = args
-    logger = logging.getLogger("LIRACOS")
     
     try:
         file_name_prefix = os.path.basename(nc_file).replace('_level1_rcs.nc', '')
