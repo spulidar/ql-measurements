@@ -32,6 +32,81 @@ def calculate_dynamic_cloud_threshold(data_array, multiplier=10.0):
     p75 = np.nanpercentile(data_array, 75)
     return p75 + (multiplier * (p75 - p25))
 
+def apply_instrumental_corrections(sig, z_da, shots, bin_time_us, deadtime, shift, bg_offset, is_photon, bg_mask, dc_prof=None, dc_err=None):
+    """
+    Applies Level 1 physical instrumental corrections rigorously: 
+    Dark Current, Unit Normalization (MHz), Dead-time, Bin-Shift,
+    and Sky Background.
+    Propagates statistical errors (Poisson/Gaussian) throughout the tensors.
+    """
+    # -----------------------------------------------------------
+    # DARK CURRENT SUBTRACTION (Instrument Noise)
+    # -----------------------------------------------------------
+    sig_dc = sig.copy()
+    err_dc = xr.zeros_like(sig)
+    
+    if dc_prof is not None:
+        sig_dc = sig_dc - dc_prof
+        if dc_err is not None:
+            err_dc = dc_err
+
+    # -----------------------------------------------------------
+    # PHYSICAL ERROR PROPAGATION & UNIT NORMALIZATION
+    # -----------------------------------------------------------
+    if not is_photon:
+        sig_dt = sig_dc.copy()
+        if np.nanmax(sig_dt) > 1000: 
+            sig_dt = sig_dt / (shots * bin_time_us)
+            
+        err_bg = sig_dt.where(bg_mask).std(dim="range")
+        err_dt = xr.ones_like(sig_dt) * err_bg
+        
+    else:
+        sig_mhz = sig_dc.copy()
+        if float(np.nanmax(sig_mhz)) > 150.0: 
+            sig_mhz = sig_mhz / (shots * bin_time_us)
+
+        # Poisson statistics for raw photon counting
+        N_photons = xr.where(sig_mhz * shots * bin_time_us > 0, sig_mhz * shots * bin_time_us, 0)
+        err_raw = np.sqrt(N_photons) / (shots * bin_time_us)
+
+        if deadtime > 0:
+            denom = 1.0 - (sig_mhz * deadtime)
+            # Saturation cap (5%) safely prevents negative denominators
+            safe_denom = xr.where(denom < 0.05, 0.05, denom)
+            sig_dt = sig_mhz / safe_denom
+            err_dt = err_raw / (safe_denom**2) 
+        else:
+            sig_dt, err_dt = sig_mhz, err_raw
+
+    # -----------------------------------------------------------
+    # STEP 3: SHIFT & SKY BACKGROUND SUBTRACTION
+    # -----------------------------------------------------------
+    max_sig_val = float(sig_dt.max().values) if float(sig_dt.max().values) > 0 else 0.0
+
+    if shift > 0:
+        sig_shift = sig_dt.shift(range=shift, fill_value=max_sig_val)
+    elif shift < 0:
+        sig_shift = sig_dt.shift(range=shift, fill_value=0.0)
+    else:
+        sig_shift = sig_dt.copy()
+
+    err_shift = err_dt.shift(range=shift, fill_value=0.0)
+
+    # Sky Background evaluation on the protected array
+    bg_mean = sig_shift.where(bg_mask).mean(dim="range") - bg_offset
+    err_bg_mean = sig_shift.where(bg_mask).std(dim="range") / np.sqrt(bg_mask.sum().values)
+
+    # Final Corrected Signal
+    sig_c = sig_shift - bg_mean
+    err_c = np.sqrt(err_shift**2 + err_bg_mean**2)
+
+    # Final Range Corrected Signal (RCS)
+    rcs = sig_c * (z_da**2)
+    err_rcs = err_c * (z_da**2)
+    
+    return sig_c, err_c, rcs, err_rcs
+
 # ==========================================
 # PHASE 2: RAYLEIGH MOLECULAR SCATTERING
 # ==========================================

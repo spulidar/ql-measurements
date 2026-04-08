@@ -20,6 +20,8 @@ import warnings
 # Import Physics & Viz Functions
 from functions.viz_utils import plot_gluing_qa, plot_molecular_qa, plot_kfs_results
 from functions.physics_utils import (
+    calculate_pbl_height_gradient, 
+    calculate_tropopause_heights, 
     calculate_molecular_profile, 
     slide_glue_signals, 
     kfs_inversion_monte_carlo, 
@@ -28,6 +30,7 @@ from functions.physics_utils import (
 
 # Suppress expected warnings for math on NaN slices and div by zero during fallback
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+
 
 # ==========================================
 # SEQUENTIAL WORKER FUNCTION

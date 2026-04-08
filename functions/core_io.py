@@ -10,6 +10,8 @@ import os
 import logging
 import yaml
 import pandas as pd
+import netCDF4 as nc
+from statistics import mode
 from datetime import datetime, timedelta
 from pathlib import Path
 from siphon.simplewebservice.wyoming import WyomingUpperAir
@@ -137,6 +139,78 @@ def read_licel_header(filepath):
     except Exception as e:
         return None, None, None, None, None
 
+
+def filter_laser_shots(df_raw: pd.DataFrame, logger) -> pd.DataFrame:
+    """
+    Evaluates laser shots quality and consistency per measurement period.
+    Rejects files with 0 shots or deviations greater than 0.2% of the expected mode.
+    Ensures that bad telemetry does not corrupt the final NetCDF.
+    """
+    logger.info("Evaluating laser shots quality and consistency per measurement...")
+    good_groups = []
+
+    for meas_id, group in df_raw.groupby("meas_id"):
+        try:
+            expected_shots = mode(group["nshots"])
+            # Filter criteria: 0 shots or deviation greater than 0.2% of expected
+            bad_condition = (group["nshots"] == 0) | (abs(group["nshots"] - expected_shots) >= 2e-3 * expected_shots)
+            
+            bad_group = group.loc[bad_condition]
+            good_group = group.loc[~bad_condition]
+            
+            total_files = len(group)
+            bad_files = len(bad_group)
+            loss_percent = (bad_files / total_files) * 100 if total_files > 0 else 0
+            
+            if bad_files > 0:
+                log_msg = f"  -> [{meas_id}] QA Report: {bad_files}/{total_files} files rejected ({loss_percent:.1f}% loss)."
+                if loss_percent > 10.0:
+                    logger.warning(log_msg)
+                else:
+                    logger.info(log_msg)
+            else:
+                logger.info(f"  -> [{meas_id}] QA Report: 100% data retention. No files rejected.")
+
+            if not good_group.empty:
+                good_groups.append(good_group)
+                
+        except Exception as e:
+            logger.warning(f"  -> [{meas_id}] Error evaluating quality: {e}")
+            
+    return pd.concat(good_groups).reset_index(drop=True) if good_groups else pd.DataFrame()
+
+
+def append_milgrau_attributes_to_nc(netcdf_path: str, weather_data: dict, my_measurement, logger):
+    """
+    Dynamically appends custom attributes and weather telemetry 
+    into the SCC-compliant NetCDF file after it has been created.
+    """
+    save_id = my_measurement.info.get("Measurement_ID", "Unknown")
+    try:
+        with nc.Dataset(netcdf_path, 'r+') as ds:
+            # Inject base SCC hardware info as global attributes for easier querying
+            ds.Temperature = my_measurement.info.get("Temperature_C", "")
+            ds.Pressure = my_measurement.info.get("Pressure_hPa", "")
+            ds.Accumulated_Shots = my_measurement.info.get("Accumulated_Shots", "")
+            ds.Laser_Frequency = my_measurement.info.get("Laser_Frequency_Hz", "")
+            ds.Measurement_Duration = my_measurement.info.get("Measurements_Duration_s", "")
+            
+            # Inject Open-Meteo Extended Telemetry if available
+            if weather_data:
+                ds.Relative_Humidity_Percent = str(round(weather_data['relative_humidity_percent'], 1))
+                ds.Cloud_Cover_Percent = str(round(weather_data['cloud_cover_percent'], 1))
+                ds.Wind_Speed_kmh = str(round(weather_data['wind_speed_kmh'], 1))
+                
+                logger.info(
+                    f"  -> [{save_id}] Weather applied from Open-Meteo API: "
+                    f"{weather_data['temperature_c']}°C, {weather_data['pressure_hpa']} hPa, "
+                    f"Cloud cover {weather_data['cloud_cover_percent']}%"
+                )
+            else:
+                logger.info(f"  -> [{save_id}] Weather API failed. Applied fallback: {ds.Temperature}°C, {ds.Pressure} hPa")
+                
+    except Exception as e:
+        logger.warning(f"  -> [{save_id}] Could not append custom global attributes: {e}")
 
 def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="01-data/wyoming_cache"):
     """
