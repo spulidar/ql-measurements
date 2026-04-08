@@ -386,7 +386,7 @@ if __name__ == "__main__":
     logger.info("=== Starting LIMP (Cloudflare R2 Upload & HTML Generation) ===")
 
     REBUILD_HTML_ONLY = False  # True: recria HTMLs e desliga uploads.
-    SYNC_MISSING_UPLOADS = True # True: vasculha a nuvem e faz upload APENAS do que faltou.
+    SYNC_MISSING_UPLOADS = False # True: vasculha a nuvem e faz upload APENAS do que faltou.
 
     # Setup directories
     root_dir = os.getcwd() 
