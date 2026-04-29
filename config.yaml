@@ -4,10 +4,7 @@
 
 processing:
   incremental: false
-  apply_cloud_mask: true
-  cloud_mask_multiplier: 10.0
-  interactive_qa: true                # Set to true to show pop-up plots (Gluing/Molecular fit)
-  save_intermediate_corrected: true
+  interactive_qa: true               
 
 directories:
   raw_data: "01-data"
@@ -28,52 +25,68 @@ physics:
   default_surface_temp_c: 25.0
   default_surface_pressure_hpa: 940.0
 
+  # Sky Background
+  bg_start: 29000
+  bg_stop: 29999
+
   # PBL detection boundaries
   pbl_min_search_m: 500.0
   pbl_max_search_m: 4000.0
   
-  # SCC Channel constants: [deadtime_us, bin_shift, bg_offset_mV]
+  # Channel constants: [deadtime_us, bin_shift, bg_offset_mV]
   channels:
-    "00355.o_ph": [0.0020, -2, 0.0005]
-    "00355.o_an": [0.0000,  8, 0.0000]
-    "00387.o_ph": [0.0000, -2, 0.0000]
-    "00387.o_an": [0.0000,  8, 0.0000]
-    "00408.o_ph": [0.0000, -2, 0.0000]
-    "00408.o_an": [0.0000,  8, 0.0000]
-    "00530.o_ph": [0.0000, -2, 0.0015]
-    "00530.o_an": [0.0000,  7, 0.0000]
-    "00532.o_ph": [0.0035, -3, 0.0015]
-    "00532.o_an": [0.0000,  6, 0.0000]
-    "01064.o_ph": [0.0000,  0, 0.0000]
-    "01064.o_an": [0.0000,  1, 0.0000]
+    "355.PC": [0.0020, -2, 0.0005]
+    "355.AN": [0.0000,  8, 0.0000]
+    "387.PC": [0.0000, -2, 0.0000]
+    "387.AN": [0.0000,  8, 0.0000]
+    "408.PC": [0.0000, -2, 0.0000]
+    "408.AN": [0.0000,  8, 0.0000]
+    "530.PC": [0.0000, -2, 0.0015]
+    "530.AN": [0.0000,  7, 0.0000]
+    "532.PC": [0.0035, -3, 0.0015]
+    "532.AN": [0.0000,  6, 0.0000]
+    "1064.PC": [0.0000,  0, 0.0000]
+    "1064.AN": [0.0000,  1, 0.0000]
 
 visualization:
   altitude_ranges_km: [5, 15, 30]
   channels_to_plot:
-    - "01064.o_an"
-    - "00532.o_an"
-    - "00532.o_ph"
-    - "00355.o_an"
-    - "00355.o_ph"
+    - "1064.AN"
+    - "532.AN"
+    - "532.PC"
+    - "355.PC"
+    - "355.PC"
 
 hardware:
-  id_to_name:
-    934: "01064.o_an"
-    935: "01064.o_ph"
-    722: "00532.o_an"
-    1593: "00532.o_an"
-    716: "00532.o_ph"
-    1558: "00530.o_an"
-    1595: "00530.o_an"
-    1557: "00530.o_ph"
-    737: "00355.o_an"
-    1594: "00355.o_an"
-    736: "00355.o_ph"
-    749: "00387.o_an"
-    1596: "00387.o_an"
-    748: "00387.o_ph"
-    1446: "00408.o_an"
-    1447: "00408.o_ph"
+
+  name_to_id:
+      day: # 'am', 'pm'
+        "1064.AN": 934
+        "1064.PC": 935
+        "532.AN": 1593  
+        "532.PC": 716
+        "530.AN": 1595
+        "530.PC": 1557
+        "355.AN": 1594
+        "355.PC": 736
+        "387.AN": 1596
+        "387.PC": 748
+        "408.AN": 1446
+        "408.PC": 1447
+        
+      night: # 'nt'
+        "1064.AN": 934
+        "1064.PC": 935
+        "532.AN": 722   
+        "532.PC": 716
+        "530.AN": 1558
+        "530.PC": 1557
+        "355.AN": 737
+        "355.PC": 736
+        "387.AN": 749
+        "387.PC": 748
+        "408.AN": 1446
+        "408.PC": 1447
 
 # ==========================================
 # PHASE 2: INVERSION & RADIOSONDE (LEBEAR)

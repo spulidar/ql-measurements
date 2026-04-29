@@ -1,9 +1,10 @@
 """
-MILGRAU Suite - Physics & Math Utilities
-Contains core mathematical functions for Phase 1 (Time/Clouds) 
-and Phase 2 (Rayleigh Scattering, Signal Gluing, Monte Carlo KFS Inversion).
+MILGRAU - Physics & Math Utilities
+Contains core mathematical functions for Level 1 (Time, Clouds, Dead-Time,
+corrections, IQR background subtraction, Error Propagation)
+and Level 2 (Rayleigh Scattering, Signal Gluing, Monte Carlo KFS Inversion).
 
-@author: Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo, Luisa Mello
+@author: Luisa Mello, Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo
 """
 
 import numpy as np
@@ -12,7 +13,7 @@ import xarray as xr
 from scipy.integrate import cumulative_trapezoid
 
 # ==========================================
-# PHASE 1: TIME & CLOUD MASKS
+# Level  1 functions
 # ==========================================
 
 def classify_period(local_dt):
@@ -25,12 +26,6 @@ def get_night_date(local_dt):
     """Adjusts the effective date for night measurements past midnight."""
     if local_dt.hour < 6: return local_dt - pd.Timedelta(days=1)
     return local_dt
-
-def calculate_dynamic_cloud_threshold(data_array, multiplier=10.0):
-    """Dynamic cloud threshold using the Interquartile Range (IQR)."""
-    p25 = np.nanpercentile(data_array, 25)
-    p75 = np.nanpercentile(data_array, 75)
-    return p75 + (multiplier * (p75 - p25))
 
 def apply_instrumental_corrections(sig, z_da, shots, bin_time_us, deadtime, shift, bg_offset, is_photon, bg_mask, dc_prof=None, dc_err=None):
     """
@@ -72,16 +67,13 @@ def apply_instrumental_corrections(sig, z_da, shots, bin_time_us, deadtime, shif
 
         if deadtime > 0:
             denom = 1.0 - (sig_mhz * deadtime)
-            # Saturation cap (5%) safely prevents negative denominators
+            # Saturation cap (5%) prevents negative denominators
             safe_denom = xr.where(denom < 0.05, 0.05, denom)
             sig_dt = sig_mhz / safe_denom
             err_dt = err_raw / (safe_denom**2) 
         else:
             sig_dt, err_dt = sig_mhz, err_raw
 
-    # -----------------------------------------------------------
-    # STEP 3: SHIFT & SKY BACKGROUND SUBTRACTION
-    # -----------------------------------------------------------
     max_sig_val = float(sig_dt.max().values) if float(sig_dt.max().values) > 0 else 0.0
 
     if shift > 0:
@@ -93,7 +85,7 @@ def apply_instrumental_corrections(sig, z_da, shots, bin_time_us, deadtime, shif
 
     err_shift = err_dt.shift(range=shift, fill_value=0.0)
 
-    # Sky Background evaluation on the protected array
+    # Sky Background evaluation 
     bg_mean = sig_shift.where(bg_mask).mean(dim="range") - bg_offset
     err_bg_mean = sig_shift.where(bg_mask).std(dim="range") / np.sqrt(bg_mask.sum().values)
 
@@ -108,8 +100,105 @@ def apply_instrumental_corrections(sig, z_da, shots, bin_time_us, deadtime, shif
     return sig_c, err_c, rcs, err_rcs
 
 # ==========================================
-# PHASE 2: RAYLEIGH MOLECULAR SCATTERING
+# Level 2 functions
 # ==========================================
+
+def calculate_pbl_height_gradient(rcs_signal, alt_m, min_search_m=500.0, max_search_m=4000.0, smooth_bins=15):
+    """
+    Estimates the Planetary Boundary Layer (PBL) height using the Gradient Method.
+    The PBL top is identified as the altitude with the strongest negative gradient
+    (sharpest drop in aerosol concentration) in the smoothed Range Corrected Signal.
+    """
+    # Restrict search to typical physical boundary layer altitudes
+    valid_idx = np.where((alt_m >= min_search_m) & (alt_m <= max_search_m))[0]
+    
+    # Ensure we have enough data points in the window to perform smoothing
+    if len(valid_idx) < smooth_bins:
+        return np.nan
+        
+    search_alt = alt_m[valid_idx]
+    search_rcs = rcs_signal[valid_idx]
+    
+    # Smooth the signal heavily to prevent noise from creating false gradients
+    smoothed_rcs = pd.Series(search_rcs).rolling(window=smooth_bins, center=True, min_periods=1).mean().values
+    
+    # Calculate the first derivative wrt altitude (dRCS / dz)
+    gradient = np.gradient(smoothed_rcs, search_alt)
+    
+    # Find the strongest negative gradient
+    min_grad_idx = np.argmin(gradient)
+    
+    # Safety check: ensure we actually found a drop-off (negative gradient)
+    if gradient[min_grad_idx] >= 0:
+        return np.nan 
+        
+    pbl_m = search_alt[min_grad_idx]
+    
+    return float(pbl_m / 1000.0)
+
+def calculate_tropopause_heights(df_radiosonde):
+    """
+    Calculates the Tropopause height (CPT and LRT WMO definitions).
+    Uses interpolation to a uniform grid to prevent high-frequency telemetry noise 
+    from breaking the WMO lapse rate conditions.
+    """
+    if df_radiosonde is None or df_radiosonde.empty:
+        return np.nan, np.nan
+        
+    alt_m = df_radiosonde['height'].values
+    temp_k = df_radiosonde['temperature'].values+273.15
+    
+    valid_idx = np.where(alt_m > 5000.0)[0]
+    if len(valid_idx) == 0:
+        return np.nan, np.nan
+        
+    search_alt = alt_m[valid_idx]
+    search_temp = temp_k[valid_idx]
+    
+    # Cold Point Tropopause (CPT) - Exact absolute minimum
+    cpt_idx = int(np.argmin(search_temp))
+    cpt_km = float(search_alt[cpt_idx] / 1000.0)
+    
+    # Ensure we have enough atmospheric profile to apply the 2km WMO rule
+    if len(search_alt) < 2 or (search_alt[-1] - search_alt[0]) < 2000.0:
+        return cpt_km, np.nan
+        
+    # Lapse Rate Tropopause (LRT) - WMO Definition
+    # We interpolate to a uniform 100m grid to calculate macroscopic gradients.
+    z_grid = np.arange(search_alt[0], search_alt[-1], 100.0)
+    t_grid = np.interp(z_grid, search_alt, search_temp)
+    
+    lrt_km = np.nan
+    
+    for i in range(len(z_grid) - 1):
+        dz_km = 0.1 # 100 meters fixed grid step
+        dt_k = t_grid[i+1] - t_grid[i]
+        gamma = -dt_k / dz_km
+        
+        if gamma <= 2.0:
+            z_i = z_grid[i]
+            t_i = t_grid[i]
+            
+            # WMO Condition 2: Check all levels within 2 km above
+            window_indices = np.where((z_grid > z_i) & (z_grid <= z_i + 2000.0))[0]
+            
+            if len(window_indices) > 0:
+                valid_window = True
+                
+                for j in window_indices:
+                    dz_window_km = (z_grid[j] - z_i) / 1000.0
+                    dt_window_k = t_grid[j] - t_i
+                    gamma_avg = -dt_window_k / dz_window_km
+                    
+                    if gamma_avg > 2.0:
+                        valid_window = False
+                        break # Failed WMO Condition 2, move to next altitude
+                        
+                if valid_window:
+                    lrt_km = float(z_i / 1000.0)
+                    break # First level to satisfy all conditions is the LRT
+                    
+    return cpt_km, lrt_km
 
 def get_standard_atmosphere(altitude_array_m):
     """Generates US Standard Atmosphere 1976 Temperature and Pressure profiles."""
@@ -132,14 +221,6 @@ def calculate_molecular_profile(temp_profile, press_profile, wavelength_nm):
     """
     Calculates the molecular backscatter and extinction profiles based on 
     thermodynamic profiles using the Ideal Gas Law and Rayleigh scattering.
-    
-    Args:
-        temp_profile (np.ndarray): Temperature profile in Kelvin.
-        press_profile (np.ndarray): Pressure profile in hPa.
-        wavelength_nm (int/float): Lidar wavelength in nanometers.
-        
-    Returns:
-        tuple: beta_mol (m^-1 sr^-1), alpha_mol (m^-1)
     """
     k_B = 1.380649e-23  # Boltzmann constant (J/K)
     
@@ -199,39 +280,30 @@ def find_optimal_reference_altitude(rcs, beta_mol, altitude, min_alt=5.0, max_al
         if np.any(np.isnan(window_ratio)) or np.any(np.isinf(window_ratio)) or np.any(window_ratio <= 0):
             continue
             
-        # 1. Variance of the ratio (Measures signal noise/stability)
         mean_ratio = np.mean(window_ratio)
         var_ratio = np.var(window_ratio)
-        
-        # Normalize variance to make it dimensionless and comparable
         rel_var = var_ratio / (mean_ratio**2) if mean_ratio != 0 else np.inf
         
-        # 2. Slope of the ratio (Measures parallelism to the molecular curve)
-        # A perfectly parallel signal has a slope of 0.
+        # Slope of the ratio
         slope, _ = np.polyfit(window_alt, window_ratio, 1)
-        
-        # Normalize the slope relative to the mean ratio
         rel_slope = abs(slope) / mean_ratio if mean_ratio != 0 else np.inf
         
         # Combined Cost Function: 
-        # Heavily penalize high slopes (non-parallelism) and moderately penalize variance (noise)
+        # Heavily penalize high slopes and moderately penalize variance/noise
         cost = rel_var + (rel_slope * 5.0) 
         
         if cost < min_cost:
             min_cost = cost
-            # The calibration point is set to the center of the best window
             best_idx = start_idx + (window_size // 2)
             
     if best_idx == -1:
-        # Fallback if no valid window is found (e.g., extremely noisy data or thick clouds)
+        # Fallback if no valid window is found (noisy data or thick clouds)
         # Defaults to the top of the search region
         best_idx = valid_indices[-1]
         
     return best_idx
 
-# ==========================================
-# PHASE 2: SIGNAL GLUING (ANALOG + PHOTON)
-# ==========================================
+# ======SIGNAL GLUING (ANALOG + PHOTON)=====
 
 def slide_glue_signals(analog_sig, pc_sig, altitude, window_size=150, min_corr=0.90):
     """
@@ -271,20 +343,17 @@ def slide_glue_signals(analog_sig, pc_sig, altitude, window_size=150, min_corr=0
             best_intercept = intercept
             
     if best_corr < min_corr:
-        # Fallback mechanism if the atmospheric condition prevents valid correlation
+        # Fallback if the atmospheric condition prevents valid correlation
         return pc_vals, -1, best_slope, best_intercept
         
     # Create the unified glued signal
-    # Below the ideal window, use scaled Analog. Above and within, use PC.
     glued_sig = np.copy(pc_vals)
     split_point = best_idx + (window_size // 2)
     glued_sig[:split_point] = (an_vals[:split_point] * best_slope) + best_intercept
     
     return glued_sig, split_point, best_slope, best_intercept
 
-# ==========================================
-# PHASE 2: OPTICAL INVERSION (KFS MONTE CARLO)
-# ==========================================
+# == OPTICAL INVERSION (KFS MONTE CARLO)====
 
 def kfs_inversion_monte_carlo(rcs, altitude, beta_mol, lr_base, lr_std=10.0, ref_idx=-1, n_iterations=100):
     """
@@ -358,112 +427,3 @@ def kfs_inversion_monte_carlo(rcs, altitude, beta_mol, lr_base, lr_std=10.0, ref
     
     return beta_mean, beta_std, alpha_mean, alpha_std
 
-def calculate_pbl_height_gradient(rcs_signal, alt_m, min_search_m=500.0, max_search_m=4000.0, smooth_bins=15):
-    """
-    Estimates the Planetary Boundary Layer (PBL) height using the Gradient Method.
-    The PBL top is identified as the altitude with the strongest negative gradient
-    (sharpest drop in aerosol concentration) in the smoothed Range Corrected Signal.
-    
-    Args:
-        rcs_signal (np.array): Range Corrected Signal (glued or single channel).
-        alt_m (np.array): Altitude array in meters.
-        min_search_m (float): Minimum altitude to search (avoids telescope overlap/surface noise).
-        max_search_m (float): Maximum altitude to search (avoids high clouds).
-        smooth_bins (int): Window size for smoothing the signal before taking the derivative.
-        
-    Returns:
-        float: Estimated PBL height in kilometers, or np.nan if calculation fails.
-    """
-    # 1. Restrict search to typical physical boundary layer altitudes
-    valid_idx = np.where((alt_m >= min_search_m) & (alt_m <= max_search_m))[0]
-    
-    # Ensure we have enough data points in the window to perform smoothing
-    if len(valid_idx) < smooth_bins:
-        return np.nan
-        
-    search_alt = alt_m[valid_idx]
-    search_rcs = rcs_signal[valid_idx]
-    
-    # 2. Smooth the signal heavily to prevent noise from creating false gradients
-    # A rolling mean acts as a low-pass filter, leaving only the macroscopic PBL drop-off
-    smoothed_rcs = pd.Series(search_rcs).rolling(window=smooth_bins, center=True, min_periods=1).mean().values
-    
-    # 3. Calculate the first derivative (gradient) w.r.t altitude (dRCS / dz)
-    gradient = np.gradient(smoothed_rcs, search_alt)
-    
-    # 4. Find the strongest negative gradient
-    min_grad_idx = np.argmin(gradient)
-    
-    # Safety check: ensure we actually found a drop-off (negative gradient)
-    if gradient[min_grad_idx] >= 0:
-        return np.nan 
-        
-    pbl_m = search_alt[min_grad_idx]
-    
-    return float(pbl_m / 1000.0)
-
-def calculate_tropopause_heights(df_radiosonde):
-    """
-    Calculates the Tropopause height (CPT and LRT WMO definitions).
-    Uses interpolation to a uniform grid to prevent high-frequency telemetry noise 
-    from breaking the WMO lapse rate conditions.
-    """
-    if df_radiosonde is None or df_radiosonde.empty:
-        return np.nan, np.nan
-        
-    alt_m = df_radiosonde['height'].values
-    temp_k = df_radiosonde['temperature'].values+273.15
-    
-    valid_idx = np.where(alt_m > 5000.0)[0]
-    if len(valid_idx) == 0:
-        return np.nan, np.nan
-        
-    search_alt = alt_m[valid_idx]
-    search_temp = temp_k[valid_idx]
-    
-    # 1. Cold Point Tropopause (CPT) - Exact absolute minimum
-    cpt_idx = int(np.argmin(search_temp))
-    cpt_km = float(search_alt[cpt_idx] / 1000.0)
-    
-    # Ensure we have enough atmospheric profile to apply the 2km WMO rule
-    if len(search_alt) < 2 or (search_alt[-1] - search_alt[0]) < 2000.0:
-        return cpt_km, np.nan
-        
-    # 2. Lapse Rate Tropopause (LRT) - WMO Definition
-    # Radiosonde telemetry is not uniformly spaced. A 0.1K noise artifact over 5m 
-    # creates a fake 20 K/km lapse rate, falsely triggering WMO rejection. 
-    # We interpolate to a uniform 100m grid to calculate macroscopic gradients.
-    z_grid = np.arange(search_alt[0], search_alt[-1], 100.0)
-    t_grid = np.interp(z_grid, search_alt, search_temp)
-    
-    lrt_km = np.nan
-    
-    for i in range(len(z_grid) - 1):
-        dz_km = 0.1 # 100 meters fixed grid step
-        dt_k = t_grid[i+1] - t_grid[i]
-        gamma = -dt_k / dz_km
-        
-        if gamma <= 2.0:
-            z_i = z_grid[i]
-            t_i = t_grid[i]
-            
-            # WMO Condition 2: Check all levels within 2 km above
-            window_indices = np.where((z_grid > z_i) & (z_grid <= z_i + 2000.0))[0]
-            
-            if len(window_indices) > 0:
-                valid_window = True
-                
-                for j in window_indices:
-                    dz_window_km = (z_grid[j] - z_i) / 1000.0
-                    dt_window_k = t_grid[j] - t_i
-                    gamma_avg = -dt_window_k / dz_window_km
-                    
-                    if gamma_avg > 2.0:
-                        valid_window = False
-                        break # Failed WMO Condition 2, move to next altitude
-                        
-                if valid_window:
-                    lrt_km = float(z_i / 1000.0)
-                    break # First level to satisfy all conditions is the LRT
-                    
-    return cpt_km, lrt_km

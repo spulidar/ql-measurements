@@ -1,23 +1,30 @@
 """
-MILGRAU Suite - Core Input/Output Module
+MILGRAU - Core Input/Output Module
 Handles configuration loading, robust logging setup, directory management,
 and raw Licel binary file scanning/parsing.
 
-@author: Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo, Luisa Mello
+@author: Luisa Mello, Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo
 """
 
-import os
-import logging
-import yaml
+import os, re, logging, yaml
+
 import pandas as pd
+import numpy as np
 import netCDF4 as nc
+
+from collections import defaultdict
+from typing import Dict, Optional
+
 from statistics import mode
 from datetime import datetime, timedelta
+
 from pathlib import Path
 from siphon.simplewebservice.wyoming import WyomingUpperAir
-import urllib.request
-import json
-from typing import Dict, Optional
+import urllib.request, json
+
+# Import MILGRAU core functions 
+from functions.physics_utils import classify_period, get_night_date
+
 
 def load_config(config_path="config.yaml"):
     """
@@ -116,106 +123,223 @@ def scan_raw_files(datadir_name, logger=None):
                     
     return filepath, meas_type
 
-def read_licel_header(filepath):
+def read_licel_header(filepath: str):
     """
-    Reads the binary file header to extract vital metadata.
-    Returns UTC times, duration, number of shots, and laser frequency.
+    Reads the global metadata from the binary file header.
     """
     try:
         with open(filepath, "rb") as f:
-            _ = f.readline().decode("utf-8")
-            lines = [f.readline().decode("utf-8") for _ in range(3)]
+            _ = f.readline()  # Line 1: filename, discard
+            line2 = f.readline().decode("utf-8", errors='ignore').strip()
+            line3 = f.readline().decode("utf-8", errors='ignore').strip()
         
-        start_time_str = lines[0][10:29].strip()
-        stop_time_str = lines[0][30:49].strip()
-        n_shots = int(lines[1][16:21])
-        laser_freq = int(lines[1][22:27])
+        # Line 2 format: "Location StartDate StartTime StopDate StopTime Altitude Lon Lat Zenith"
+        # We slice the strictly formatted date-time block (19 chars: DD/MM/YYYY HH:MM:SS)
+        start_time_str = line2[8:27].strip()
+        stop_time_str = line2[28:47].strip()
         
         start_time_utc = datetime.strptime(start_time_str, "%d/%m/%Y %H:%M:%S")
         stop_time_utc = datetime.strptime(stop_time_str, "%d/%m/%Y %H:%M:%S")
         duration = (stop_time_utc - start_time_utc).total_seconds()
         
+        # Line 3 format dynamically split: e.g. "0000000 0100 0003001 0100 12"
+        parts = line3.split()
+        n_shots = int(parts[2])     # 0003001 -> 3001
+        laser_freq = int(parts[3])  # 0100 -> 100
+        
         return start_time_utc, stop_time_utc, duration, n_shots, laser_freq
     except Exception as e:
         return None, None, None, None, None
 
-
-def filter_laser_shots(df_raw: pd.DataFrame, logger) -> pd.DataFrame:
+def _parse_single_licel_file(filepath: str) -> dict:
     """
-    Evaluates laser shots quality and consistency per measurement period.
-    Rejects files with 0 shots or deviations greater than 0.2% of the expected mode.
-    Ensures that bad telemetry does not corrupt the final NetCDF.
+    Reads a single Licel binary file, fully customized for SPU-Lidar hardware.
     """
-    logger.info("Evaluating laser shots quality and consistency per measurement...")
-    good_groups = []
+    with open(filepath, 'rb') as f:
+        _ = f.readline() # Line 1
+        _ = f.readline() # Line 2
+        line3 = f.readline().decode('utf-8', errors='ignore').strip()
+        
+        parts3 = line3.split()
+        n_shots = int(parts3[2])
+        laser_freq = int(parts3[3])
+        num_channels = int(parts3[4])
+        
+        channels_meta = []
+        for _ in range(num_channels):
+            ch_line = f.readline().decode('utf-8', errors='ignore').strip()
+            parts = ch_line.split()
+            
+            # Base properties
+            active = int(parts[0])
+            is_photon_counting = bool(int(parts[1]))
+            num_points = int(parts[3])
+            
+            # String formatting for wavelength (e.g., '01064.o' -> '1064')
+            raw_wl = parts[7]
+            clean_wl = re.sub(r'[^0-9]', '', raw_wl.split('.')[0]).lstrip('0')
+            if not clean_wl: clean_wl = "0"
+            
+            ch_name = f"{clean_wl}.{'PC' if is_photon_counting else 'AN'}"
+            
+            # Hardware specific constants from header
+            adc_bits = int(parts[12]) if len(parts) > 12 else 12
+            if adc_bits == 0 and not is_photon_counting:
+                adc_bits = 12 # Safe fallback if missing
+                
+            # Range 
+            adc_range_v = float(parts[14]) if len(parts) > 14 else 0.5
+            adc_range_mv = adc_range_v * 1000.0 
+            
+            channels_meta.append({
+                'name': ch_name,
+                'active': active,
+                'is_pc': is_photon_counting,
+                'points': num_points,
+                'adc_range': adc_range_mv,
+                'adc_bits': adc_bits
+            })
+            
+        # Skip empty line and read binary contiguous memory
+        f.readline() 
+        binary_payload = np.fromfile(f, dtype=np.int32)
+        
+    # Math & Physics Tensor Construction
+    data_dict = {}
+    cursor = 0
+    
+    for ch in channels_meta:
+        if ch['active'] == 0:
+            continue
+            
+        raw_int_array = binary_payload[cursor : cursor + ch['points']]
+        cursor += ch['points']
+        
+        if ch['is_pc']:
+            # Photon Counting: Raw Accumulated counts (Float64 for later Dead-Time correction)
+            physical_array = raw_int_array.astype(np.float64)
+        else:
+            # Analog Lidar Equation: mV = (Raw / Shots) * (Range_mV / 2^Bits)
+            adc_factor = ch['adc_range'] / (2 ** ch['adc_bits'])
+            physical_array = (raw_int_array.astype(np.float64) / n_shots) * adc_factor
+            
+        data_dict[ch['name']] = physical_array
 
-    for meas_id, group in df_raw.groupby("meas_id"):
+    return {
+        'data': data_dict,
+        'shots': n_shots,
+        'laser_freq': laser_freq,
+        'channels_meta': channels_meta
+    }
+
+def build_measurement_inventory(raw_dir: str, config: dict, logger: logging.Logger) -> pd.DataFrame:
+    """
+    Scans directories, parses basic headers, converts timezones, and filters existing NetCDFs.
+    """
+    logger.info("Building raw data inventory...")
+    file_paths, file_types = scan_raw_files(raw_dir, logger)
+    if not file_paths:
+        return pd.DataFrame()
+
+    results = [read_licel_header(f) for f in file_paths]
+    start_times_utc, stop_times, durations, nshots_list, laser_freqs = zip(*results)
+
+    df_raw = pd.DataFrame({
+        "filepath": file_paths, 
+        "meas_type": file_types, 
+        "start_time_utc": start_times_utc, 
+        "stop_time": stop_times, 
+        "nshots": nshots_list, 
+        "duration": durations, 
+        "laser_freq": laser_freqs,
+    }).dropna(subset=['start_time_utc'])
+
+    if df_raw.empty:
+        return df_raw
+
+    # Timezone alignments 
+    df_raw['start_time_utc'] = pd.to_datetime(df_raw['start_time_utc']).dt.tz_localize('UTC')
+    df_raw['start_time_local'] = df_raw['start_time_utc'].dt.tz_convert('America/Sao_Paulo')
+    
+    # Generate unique ID 
+    df_raw['meas_id'] = (
+        df_raw['start_time_local'].apply(get_night_date).dt.strftime('%Y%m%d') + 
+        df_raw['start_time_local'].apply(classify_period)
+    )
+
+    # Identifies real measurements
+    valid_mids = df_raw[df_raw['meas_type'] == 'measurements']['meas_id'].unique()
+    
+    # Identifies orphans (only dark current measurements in time period)
+    orphan_mids = set(df_raw['meas_id'].unique()) - set(valid_mids)
+    
+    if orphan_mids:
+        logger.info(f"   -> Reassigning orphaned Dark Current groups: {orphan_mids} to nearest measurements...")
+        valid_df = df_raw[df_raw['meas_id'].isin(valid_mids)].copy()
+        
+        if not valid_df.empty:
+            for idx, row in df_raw[df_raw['meas_id'].isin(orphan_mids)].iterrows():
+                time_diffs = abs(valid_df['start_time_utc'] - row['start_time_utc'])
+                # Closest real measurement ID to adopt orphan DC
+                closest_idx = time_diffs.idxmin()
+                df_raw.at[idx, 'meas_id'] = valid_df.at[closest_idx, 'meas_id']
+        else:
+            df_raw = df_raw[~df_raw['meas_id'].isin(orphan_mids)]
+
+    # Incremental processing filter
+    if config['processing'].get('incremental', True):
+        netcdf_dir = os.path.join(os.getcwd(), config['directories']['processed_data'])
+        existing_mids = []
+        for mid in df_raw["meas_id"].unique():
+            save_id = f"{mid[:8]}sa{mid[8:]}"
+            expected_path = os.path.join(netcdf_dir, mid[:4], mid[4:6], save_id, f"{save_id}.nc")
+            if os.path.exists(expected_path):
+                existing_mids.append(mid)
+                
+        df_raw = df_raw[~df_raw["meas_id"].isin(existing_mids)]
+        logger.info(f"Incremental mode: Skipped {len(existing_mids)} already processed groups.")
+
+    return df_raw
+
+def parse_licel_group(filepaths: list, logger: logging.Logger) -> dict:
+    """
+    Orchestrates the reading of multiple Licel files into Time x Range matrices.
+    """
+    logger.info(f"    -> Parsing {len(filepaths)} raw binary files...")
+    
+    time_series = defaultdict(list)
+    global_shots = []
+    
+    # Process each file chronologically
+    for fp in sorted(filepaths):
         try:
-            expected_shots = mode(group["nshots"])
-            # Filter criteria: 0 shots or deviation greater than 0.2% of expected
-            bad_condition = (group["nshots"] == 0) | (abs(group["nshots"] - expected_shots) >= 2e-3 * expected_shots)
+            parsed = _parse_single_licel_file(fp)
+            global_shots.append(parsed['shots'])
             
-            bad_group = group.loc[bad_condition]
-            good_group = group.loc[~bad_condition]
-            
-            total_files = len(group)
-            bad_files = len(bad_group)
-            loss_percent = (bad_files / total_files) * 100 if total_files > 0 else 0
-            
-            if bad_files > 0:
-                log_msg = f"  -> [{meas_id}] QA Report: {bad_files}/{total_files} files rejected ({loss_percent:.1f}% loss)."
-                if loss_percent > 10.0:
-                    logger.warning(log_msg)
-                else:
-                    logger.info(log_msg)
-            else:
-                logger.info(f"  -> [{meas_id}] QA Report: 100% data retention. No files rejected.")
-
-            if not good_group.empty:
-                good_groups.append(good_group)
-                
+            for ch_name, array in parsed['data'].items():
+                time_series[ch_name].append(array)
         except Exception as e:
-            logger.warning(f"  -> [{meas_id}] Error evaluating quality: {e}")
-            
-    return pd.concat(good_groups).reset_index(drop=True) if good_groups else pd.DataFrame()
+            logger.warning(f"    -> Failed to read {os.path.basename(fp)}: {e}")
+            continue
 
+    # Stack into 2D Tensors (Time x Points)
+    tensor_dict = {}
+    for ch_name, list_of_arrays in time_series.items():
+        tensor_dict[ch_name] = np.vstack(list_of_arrays)
 
-def append_attributes_to_nc(netcdf_path: str, weather_data: dict, my_measurement, logger):
-    """
-    Dynamically appends custom attributes and weather telemetry 
-    into the SCC-compliant NetCDF file after it has been created.
-    """
-    save_id = my_measurement.info.get("Measurement_ID", "Unknown")
-    try:
-        with nc.Dataset(netcdf_path, 'r+') as ds:
-            # Inject base SCC hardware info as global attributes for easier querying
-            ds.Temperature = my_measurement.info.get("Temperature_C", "")
-            ds.Pressure = my_measurement.info.get("Pressure_hPa", "")
-            ds.Accumulated_Shots = my_measurement.info.get("Accumulated_Shots", "")
-            ds.Laser_Frequency = my_measurement.info.get("Laser_Frequency_Hz", "")
-            ds.Measurement_Duration = my_measurement.info.get("Measurements_Duration_s", "")
-            
-            # Inject Open-Meteo Extended Telemetry if available
-            if weather_data:
-                ds.Relative_Humidity_Percent = str(round(weather_data['relative_humidity_percent'], 1))
-                ds.Cloud_Cover_Percent = str(round(weather_data['cloud_cover_percent'], 1))
-                ds.Wind_Speed_kmh = str(round(weather_data['wind_speed_kmh'], 1))
-                
-                logger.info(
-                    f"  -> [{save_id}] Weather applied from Open-Meteo API: "
-                    f"{weather_data['temperature_c']}°C, {weather_data['pressure_hpa']} hPa, "
-                    f"Cloud cover {weather_data['cloud_cover_percent']}%"
-                )
-            else:
-                logger.info(f"  -> [{save_id}] Weather API failed. Applied fallback: {ds.Temperature}°C, {ds.Pressure} hPa")
-                
-    except Exception as e:
-        logger.warning(f"  -> [{save_id}] Could not append custom global attributes: {e}")
+    # We assume mode of shots for the NetCDF global metadata
+    accumulated_shots = int(mode(global_shots)) if global_shots else 0
 
+    return {
+        'tensors': tensor_dict,
+        'shots': accumulated_shots,
+        'channels': list(tensor_dict.keys())
+    }
+   
 def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="01-data/wyoming_cache"):
     """
     Fetches Wyoming radiosonde data (Pressure, Altitude, Temperature) 
-    using the Siphon library, bypassing manual HTML parsing.
+    using the Siphon library.
     Uses a local cache to prevent redundant downloads and timeouts.
     Returns a clean Pandas DataFrame or None if the server fails.
     """
@@ -246,7 +370,7 @@ def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="
     logger.info(f"  -> [RADIOSONDE] Fetching {target_dt.strftime('%Y-%m-%d %H:%M')}Z for station {station_id} via Siphon...")
     
     try:
-        # Fetch data using Siphon (Zero HTML parsing required!)
+        # Fetch data 
         df_raw = WyomingUpperAir.request_data(target_dt, station_id)
         df = df_raw.drop_duplicates(subset=['height'], keep='first').sort_values('height')
         df.to_csv(cache_file, index=False)
@@ -294,5 +418,4 @@ def fetch_surface_weather(dt_utc: datetime, lat: float, lon: float) -> Optional[
             
         return None
     except Exception:
-        # Fails silently to allow fallback values in the main pipeline
         return None

@@ -1,37 +1,36 @@
 """
-MILGRAU Suite - Visualization Utilities
+MILGRAU - Visualization Utilities
 Handles matplotlib configurations, standard Lidar quicklooks,
 error band plotting, and aesthetic formatting (logos, footers).
 Includes Phase 2 Interactive QA plots (Gluing, Molecular Fit, KFS).
 
-@author: Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo, Luisa Mello
+@author: Luisa Mello, Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo
 """
 
 import os
 import numpy as np
-# Removed matplotlib.use('Agg') to allow Interactive Pop-ups for LEBEAR
+import pandas as pd
+
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
-from matplotlib.ticker import ScalarFormatter 
+from matplotlib.ticker import ScalarFormatter
 from matplotlib.colors import ListedColormap
-from datetime import datetime
 
-# Import our physics math for the cloud mask
-from functions.physics_utils import calculate_dynamic_cloud_threshold
+from datetime import datetime
 
 # ==========================================
 # PHASE 1: STRING & METADATA FORMATTING
 # ==========================================
 
 def extract_datetime_strings(ds):
+    """Dynamically extracts formatted dates from the native time coordinates."""
     try:
-        dt_in_str = f"{ds.attrs['RawData_Start_Date']}{str(ds.attrs['RawData_Start_Time_UT']).zfill(6)}"
-        dt_end_str = f"{ds.attrs['RawData_Start_Date']}{str(ds.attrs['RawData_Stop_Time_UT']).zfill(6)}"
-        dt_in = datetime.strptime(dt_in_str, "%Y%m%d%H%M%S")
-        dt_end = datetime.strptime(dt_end_str, "%Y%m%d%H%M%S")
-        date_title = f"{dt_in.strftime('%d %b %Y - %H:%M')} to {dt_end.strftime('%d %b %Y - %H:%M')} UTC"
+        dt_in = pd.to_datetime(ds.time.values.min())
+        dt_end = pd.to_datetime(ds.time.values.max())
+        
+        date_title = f"{dt_in.strftime('%d %b %Y - %H:%M')} to {dt_end.strftime('%H:%M')} UTC"
         date_footer = dt_in.strftime("%d %b %Y")
         return date_title, date_footer
     except Exception:
@@ -41,13 +40,13 @@ def format_channel_name(raw_name):
     try:
         parts = raw_name.split('.')
         wavelength = int(parts[0])
-        mode = 'PC' if parts[1].split('_')[1].upper() == 'PH' else 'AN'
+        mode = str(parts[1])
         return f"{wavelength}nm {mode}"
     except Exception:
         return raw_name
 
 def add_footer_and_logos(fig, root_dir):
-    """Adds a clean, date-free institutional footer with aligned logos."""
+    """Adds institutional footer with aligned logos."""
     fig.text(0.08, 0.04, "SPU Lidar Station - São Paulo", fontsize=13, fontweight="bold", color="#333333", va="center")
 
     logos = [
@@ -72,7 +71,7 @@ def add_footer_and_logos(fig, root_dir):
 # PHASE 1: LEVEL 1 PLOTTING ENGINES
 # ==========================================
 
-def plot_quicklook(data_slice, error_slice, max_altitude, channel_name, ds, output_folder, file_name_prefix, config, root_dir, pbl_km=-999.0, cpt_km=-999.0, lrt_km=-999.0):
+def plot_quicklook(data_slice, error_slice, max_altitude, channel_name, ds, output_folder, file_name_prefix, config, root_dir, pbl_da=None, cpt_km=-999.0, lrt_km=-999.0):
     date_title, date_footer = extract_datetime_strings(ds)
     pretty_channel = format_channel_name(channel_name)
     meas_title = f"RCS at {pretty_channel} (0 - {max_altitude} km)\n{date_title}\nSPU Lidar Station - São Paulo"
@@ -81,35 +80,18 @@ def plot_quicklook(data_slice, error_slice, max_altitude, channel_name, ds, outp
     gs = gridspec.GridSpec(1, 2, width_ratios=[4, 1], wspace=0.03)
     
     # ---------------------------------------------------------
-    # SUBPLOT 0: Spatio-Temporal Colormap (RCS)
+    # SUBPLOT 0:  Colormap (RCS)
     # ---------------------------------------------------------
     ax0 = plt.subplot(gs[0])
     
-    apply_cloud_mask = config.get("processing", {}).get("apply_cloud_mask", True)
-    
-    if apply_cloud_mask:
-        multiplier = config.get("processing", {}).get("cloud_mask_multiplier", 10.0)
-        dynamic_threshold = calculate_dynamic_cloud_threshold(data_slice, multiplier=multiplier)
-        
-        raw_vals = data_slice.values
-        
-        aerosol_mask = np.where(raw_vals < dynamic_threshold, raw_vals, np.nan)
-        cloud_mask = np.where(raw_vals >= dynamic_threshold, raw_vals, np.nan)
-        
-        rcs_aerosol = data_slice.copy(data=aerosol_mask)
-        rcs_clouds = data_slice.copy(data=cloud_mask)
-
-        plot = rcs_aerosol.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, 
-                                add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
-        
-        rcs_clouds.plot(x='time', y='altitude', cmap=ListedColormap(['white']), 
-                        add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
-                        
-        del raw_vals, aerosol_mask, cloud_mask, rcs_aerosol, rcs_clouds
-    else:
-        # rasterized=True prevents SVG/PDF vector explosion in high-res datasets
-        plot = data_slice.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, 
-                               add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
+    # Plot standard data
+    plot = data_slice.plot(x='time', y='altitude', cmap='jet', robust=True, vmin=0, 
+                           add_colorbar=False, ax=ax0, add_labels=False, rasterized=True)
+                           
+    # Plot the PBL tracking line
+    if pbl_da is not None:
+        ax0.plot(pbl_da.time, pbl_da.values, color='crimson', linestyle=':', linewidth=2.5, alpha=1.0, label='PBL Top')
+        ax0.legend(loc='upper right', framealpha=0.7, fontsize=9, facecolor='white', edgecolor='black')
     
     ax0.set_title(meas_title, fontsize=15, fontweight="bold", loc='center')
     ax0.set_xlabel('Time (UTC)', fontsize=13, fontweight="bold")
@@ -140,25 +122,26 @@ def plot_quicklook(data_slice, error_slice, max_altitude, channel_name, ds, outp
     ax1.set_xlim(min(0, p_min)-margin, p_max + margin)
     ax1.set_ylim(0.16 if "AN" in pretty_channel else 0.5, max_altitude)
 
-    # --- INJECT VISUAL GUIDES (PBL & TROPOPAUSE) ---
-    # Draw horizontal lines only if valid data (-999.0 means missing/failed)
-    # Using 'zorder=5' to ensure lines are drawn on top of the shaded error regions
-    
-    # Planetary Boundary Layer (PBL) - Crimson dashed
-    if pbl_km > 0 and pbl_km <= max_altitude:
-        ax1.axhline(y=pbl_km, color='crimson', linestyle='--', linewidth=1.8, zorder=5, label=f'PBL ({pbl_km:.1f} km)')
-        
-    # Cold Point Tropopause (CPT) - Blue dotted
-    if cpt_km > 0 and cpt_km <= max_altitude:
+    has_legend = False
+    # Planetary Boundary Layer 
+    if pbl_da is not None:
+        mean_pbl = float(pbl_da.mean().values)
+        if 0 < mean_pbl <= max_altitude:
+            ax1.axhline(y=mean_pbl, color='crimson', linestyle='--', linewidth=1.8, zorder=5, label=f'Mean PBL ({mean_pbl:.1f} km)')
+            has_legend = True
+
+    # Cold Point Tropopause (CPT) 
+    if 0 < cpt_km <= max_altitude:
         ax1.axhline(y=cpt_km, color='royalblue', linestyle=':', linewidth=1.8, zorder=5, label=f'CPT ({cpt_km:.1f} km)')
+        has_legend = True
         
-    # Lapse Rate Tropopause (LRT - WMO) - Green dash-dot
-    if lrt_km > 0 and lrt_km <= max_altitude:
+    # Lapse Rate Tropopause (LRT - WMO) 
+    if 0 < lrt_km <= max_altitude:
         ax1.axhline(y=lrt_km, color='forestgreen', linestyle='-.', linewidth=1.8, zorder=5, label=f'LRT ({lrt_km:.1f} km)')
+        has_legend = True
         
-    # Trigger legend if any of the lines were plotted
-    if (pbl_km > 0) or (cpt_km > 0) or (lrt_km > 0):
-        ax1.legend(loc='upper right', framealpha=0.9, fontsize=9)
+    if has_legend:
+        ax1.legend(loc='upper right', framealpha=0.9, fontsize=9, facecolor='white', edgecolor='black')
 
     # ---------------------------------------------------------
     # FINAL FORMATTING & EXPORT
@@ -212,6 +195,7 @@ def plot_global_mean_rcs(ds, output_folder, file_name_prefix, config, root_dir):
     plt.savefig(os.path.join(output_folder, f'GlobalMeanRCS_{file_name_prefix}.webp'), dpi=120)
     plt.close(fig)
 
+
 # ==========================================
 # PHASE 2: LEVEL 2 INTERACTIVE QA PLOTS (LEBEAR)
 # ==========================================
@@ -256,7 +240,7 @@ def plot_gluing_qa(alt_km, lower_sig, upper_sig, glued_sig, best_idx, window_siz
     ax2.grid(True, alpha=0.5, which='both', linestyle='--')
     
     add_footer_and_logos(fig, root_dir)
-    plt.subplots_adjust(bottom=0.20, top=0.88) # Massive bottom margin for logos
+    plt.subplots_adjust(bottom=0.20, top=0.88) 
     
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(os.path.join(save_dir, f'QA_Gluing_{prefix}_{channel_base_name.replace(" ", "_")}.webp'), dpi=120)
@@ -281,14 +265,13 @@ def plot_molecular_qa(alt_km, rcs, simulated_mol, fit_min_km, fit_max_km, config
     ax.grid(True, alpha=0.5, which='both', linestyle='--')
     
     add_footer_and_logos(fig, root_dir)
-    plt.subplots_adjust(bottom=0.20, top=0.90) # Massive bottom margin
+    plt.subplots_adjust(bottom=0.20, top=0.90)
     
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(os.path.join(save_dir, f'QA_Molecular_{prefix}_{channel_name.replace(" ", "_")}.webp'), dpi=120)
     
     if config.get('processing', {}).get('interactive_qa', True): plt.show(block=True)
     plt.close(fig)
-
 
 
 def plot_kfs_results(alt_km, beta_mean, beta_std, ext_mean, ext_std, config, channel_name, save_dir, prefix, ds, root_dir):
