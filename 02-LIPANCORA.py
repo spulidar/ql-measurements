@@ -7,7 +7,6 @@ Enriches the NetCDF with PBL height, Radiosonde data, and Tropopause calculation
 @author: Luisa Mello, Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo
 """
 
-import os
 import pandas as pd
 import numpy as np
 import xarray as xr
@@ -84,8 +83,8 @@ def apply_all_physical_corrections(ds, z_arr, config, logger):
             )
             
             ch_ds = xr.Dataset({
-                'Range_Corrected_Signal': rcs_c.rename({'range': 'altitude'}).assign_coords(channel=ch_name).astype(np.float32),
-                'Range_Corrected_Signal_Error': err_rcs_c.rename({'range': 'altitude'}).assign_coords(channel=ch_name).astype(np.float32)
+                'corrected_signal': rcs_c.rename({'range': 'altitude'}).assign_coords(channel=ch_name).astype(np.float32),
+                'corrected_signal_error': err_rcs_c.rename({'range': 'altitude'}).assign_coords(channel=ch_name).astype(np.float32)
             })
             rcs_datasets.append(ch_ds)
         except Exception as e:
@@ -101,7 +100,8 @@ def estimate_pbl_timeseries(final_ds, z_arr, logger):
     try:
         # Priority: 532nm Analog 
         pbl_channel = next((ch for ch in final_ds.channel.values if "an" in ch.lower() and "532" in ch), final_ds.channel.values[0])
-        rcs_matrix = final_ds['Range_Corrected_Signal'].sel(channel=pbl_channel).values
+
+        rcs_matrix = final_ds['corrected_signal'].sel(channel=pbl_channel).values
         
         logger.info(f"  -> [STAGE 3] Tracking PBL evolution using {pbl_channel}...")
         pbl_h = [calculate_pbl_height_gradient(rcs_matrix[t, :], z_arr) for t in range(rcs_matrix.shape[0])]
@@ -135,8 +135,10 @@ def integrate_thermodynamics(final_ds, config, logger):
 def process_single_file(args):
     nc_path, config = args
     try:
-        stem = Path(nc_path).stem
-        save_path = Path(os.getcwd()) / config['directories']['processed_data'] / stem[:4] / stem[4:6] / stem / f"{stem}_level1_rcs.nc"
+        nc_file = Path(nc_path)
+        stem = nc_file.stem
+        
+        save_path = Path.cwd() / config['directories']['processed_data'] / stem[:4] / stem[4:6] / stem / f"{stem}_level1_rcs.nc"
 
         logger.info(f"[{stem}] Initializing...")
         
@@ -150,7 +152,7 @@ def process_single_file(args):
         final_ds.attrs["Processing_level"] = "Level 1: PC->MHz, DeadTime, Dark Current, Shift, Background, RCS, Errors, PBL, Tropopause"
         
         # Compressed Export
-        ensure_directories(os.path.dirname(save_path))
+        ensure_directories(save_path.parent)
         final_ds.to_netcdf(save_path, encoding={v: {'zlib': True, 'complevel': 4} for v in final_ds.data_vars})
         
         return f"[OK] {stem} Level 1 generated successfully."
@@ -162,8 +164,8 @@ if __name__ == "__main__":
     logger = setup_logger("LIPANCORA", conf['directories']['log_dir'])
     logger.info("=== Starting MILGRAU LIPANCORA (Level 1) ===")
     
-    in_dir = os.path.join(os.getcwd(), conf['directories']['processed_data'])
-    files = [f for f in sorted(Path(in_dir).rglob("*.nc")) if "level" not in f.name]
+    in_dir = Path.cwd() / conf['directories']['processed_data']
+    files = [f for f in sorted(in_dir.rglob("*.nc")) if "level" not in f.name]
     
     if not files:
         logger.warning("No Level 0 files found for processing.")
