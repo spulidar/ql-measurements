@@ -2,12 +2,11 @@
 MILGRAU - Visualization Utilities
 Handles matplotlib configurations, standard Lidar quicklooks,
 error band plotting, and aesthetic formatting (logos, footers).
-Includes Phase 2 Interactive QA plots (Gluing, Molecular Fit, KFS).
+WIP: Phase 2 Interactive QA plots (Gluing, Molecular Fit, KFS).
 
 @author: Luisa Mello, Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo
 """
 
-import os
 import numpy as np
 import pandas as pd
 
@@ -19,6 +18,7 @@ from matplotlib.ticker import ScalarFormatter
 from matplotlib.colors import ListedColormap
 
 from datetime import datetime
+from pathlib import Path
 
 # ==========================================
 # PHASE 1: STRING & METADATA FORMATTING
@@ -49,16 +49,17 @@ def add_footer_and_logos(fig, root_dir):
     """Adds institutional footer with aligned logos."""
     fig.text(0.08, 0.04, "SPU Lidar Station - São Paulo", fontsize=13, fontweight="bold", color="#333333", va="center")
 
+    root_path = Path(root_dir)
     logos = [
-        (os.path.join(root_dir, "img", "CC_BY-NC-ND.png"), 0.040),
-        (os.path.join(root_dir, "img", "lalinet_logo2.png"), 0.070),
-        (os.path.join(root_dir, "img", "logo_leal2.png"), 0.065),
+        (root_path / "img" / "CC_BY-NC-ND.png", 0.040),
+        (root_path / "img" / "lalinet_logo2.png", 0.070),
+        (root_path / "img" / "logo_leal2.png", 0.065),
     ]
 
     spacing, y_pos, x_right = 0.010, 0.01, 0.98
     for path, height in logos:
-        if not os.path.exists(path): continue
-        img = mpimg.imread(path)
+        if not path.exists(): continue
+        img = mpimg.imread(str(path))
         h, w = img.shape[:2]
         width = height * (w / h) 
         x_left = x_right - width
@@ -154,7 +155,9 @@ def plot_quicklook(data_slice, error_slice, max_altitude, channel_name, ds, outp
     cb_ax.yaxis.set_label_position('left')
 
     add_footer_and_logos(fig, root_dir)
-    plt.savefig(os.path.join(output_folder, f'Quicklook_{file_name_prefix}_{pretty_channel.replace(" ", "_")}_{max_altitude}km.webp'), dpi=120)
+    
+    out_path = Path(output_folder) / f'Quicklook_{file_name_prefix}_{pretty_channel.replace(" ", "_")}_{max_altitude}km.webp'
+    plt.savefig(out_path, dpi=120)
     plt.close(fig)
 
 def plot_global_mean_rcs(ds, output_folder, file_name_prefix, config, root_dir):
@@ -169,8 +172,9 @@ def plot_global_mean_rcs(ds, output_folder, file_name_prefix, config, root_dir):
     for ch in config.get("visualization", {}).get("channels_to_plot", []):
         if ch in ds.channel.values:
             color = base_colors.get(int(ch.split('.')[0]), "black") if "." in ch else "black"
-            rc_sig = ds['Range_Corrected_Signal'].sel(channel=ch).where(ds['altitude'] <= max_altitude, drop=True)
-            rc_err = ds['Range_Corrected_Signal_Error'].sel(channel=ch).where(ds['altitude'] <= max_altitude, drop=True)
+            
+            rc_sig = ds['corrected_signal'].sel(channel=ch).where(ds['altitude'] <= max_altitude, drop=True)
+            rc_err = ds['corrected_signal_error'].sel(channel=ch).where(ds['altitude'] <= max_altitude, drop=True)
             
             mean_prof = rc_sig.mean(dim='time').rolling(altitude=50, min_periods=1).mean()
             mean_err = (np.sqrt((rc_err**2).sum(dim='time')) / rc_err.sizes['time']).rolling(altitude=50, min_periods=1).mean()
@@ -192,144 +196,7 @@ def plot_global_mean_rcs(ds, output_folder, file_name_prefix, config, root_dir):
     ax.grid(True, which='both', alpha=0.5)
 
     add_footer_and_logos(fig, root_dir)
-    plt.savefig(os.path.join(output_folder, f'GlobalMeanRCS_{file_name_prefix}.webp'), dpi=120)
-    plt.close(fig)
-
-
-# ==========================================
-# PHASE 2: LEVEL 2 INTERACTIVE QA PLOTS (LEBEAR)
-# ==========================================
-
-def plot_gluing_qa(alt_km, lower_sig, upper_sig, glued_sig, best_idx, window_size, config, channel_base_name, ds, root_dir, save_dir, prefix):
-    date_title, date_footer = extract_datetime_strings(ds)
-    fig = plt.figure(figsize=[15, 7.5])
-    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1], wspace=0.15)
     
-    fig.suptitle(f"Gluing QA Calibration - {channel_base_name}\n{date_title}", fontsize=15, fontweight='bold', y=0.95)
-    
-    ax1 = plt.subplot(gs[0])
-    ax1.plot(lower_sig, alt_km, color='royalblue', label='Analog', alpha=0.8, linewidth=2)
-    ax1.plot(upper_sig, alt_km, color='darkorange', label='PC', alpha=0.8, linewidth=2)
-    ax1.plot(glued_sig, alt_km, color='black', linestyle='--', label='Glued Signal', linewidth=1.5)
-    
-    ax1.axhline(alt_km[best_idx], color='crimson', linestyle=':', label='Gluing Core', linewidth=2)
-    
-    # ax1.set_xscale('log')
-    ax1.set_ylim(0, min(15.0, alt_km[-1]))
-    ax1.set_xlabel('Range Corrected Signal [a.u.]', fontsize=12, fontweight='bold', labelpad=10)
-    ax1.set_ylabel('Altitude [km a.g.l.]', fontsize=12, fontweight='bold')
-    ax1.legend(fontsize=11, loc='upper right')
-    ax1.grid(True, alpha=0.5, which='both', linestyle='--')
-    
-    ax2 = plt.subplot(gs[1])
-    ax2.plot(lower_sig, alt_km, color='royalblue', label='Analog', marker='.', alpha=0.7)
-    ax2.plot(upper_sig, alt_km, color='darkorange', label='PC', marker='.', alpha=0.7)
-    ax2.plot(glued_sig, alt_km, color='black', linestyle='--', label='Glued', marker='x', markersize=4)
-    
-    min_idx = max(0, best_idx - window_size)
-    max_idx = min(len(alt_km)-1, best_idx + int(window_size*1.5))
-    ax2.set_ylim(alt_km[min_idx], alt_km[max_idx])
-    
-    if np.nanmax(glued_sig[min_idx:max_idx]) > 0:
-        ax2.set_xlim(np.nanmin(glued_sig[min_idx:max_idx])*0.5, np.nanmax(glued_sig[min_idx:max_idx])*2.0)
-    
-    # ax2.set_xscale('log')
-    ax2.set_xlabel('Range Corrected Signal [a.u.]', fontsize=12, fontweight='bold', labelpad=10)
-    ax2.set_title(f"Transition Region Window", fontsize=13, fontweight='bold')
-    ax2.legend(fontsize=11)
-    ax2.grid(True, alpha=0.5, which='both', linestyle='--')
-    
-    add_footer_and_logos(fig, root_dir)
-    plt.subplots_adjust(bottom=0.20, top=0.88) 
-    
-    os.makedirs(save_dir, exist_ok=True)
-    plt.savefig(os.path.join(save_dir, f'QA_Gluing_{prefix}_{channel_base_name.replace(" ", "_")}.webp'), dpi=120)
-    
-    if config.get('processing', {}).get('interactive_qa', True): plt.show(block=True)
-    plt.close(fig)
-
-def plot_molecular_qa(alt_km, rcs, simulated_mol, fit_min_km, fit_max_km, config, channel_name, ds, root_dir, save_dir, prefix):
-    date_title, date_footer = extract_datetime_strings(ds)
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    ax.plot(rcs, alt_km, color='darkblue', label=f'Glued RCS ({channel_name})', alpha=0.8, linewidth=1.5)
-    ax.plot(simulated_mol, alt_km, color='crimson', linestyle='--', label='Rayleigh Fit', linewidth=2.5)
-    ax.axhspan(fit_min_km, fit_max_km, color='forestgreen', alpha=0.15, label='Calibration Region')
-    
-    ax.set_title(f"Molecular Calibration QA - {channel_name}\n{date_title}", fontsize=14, fontweight='bold', y=1.02)
-    # ax.set_xscale('log')
-    ax.set_ylim(0, min(25.0, alt_km[-1]))
-    ax.set_xlabel('Range Corrected Signal [a.u.]', fontsize=12, fontweight='bold', labelpad=10)
-    ax.set_ylabel('Altitude [km a.g.l.]', fontsize=12, fontweight='bold')
-    ax.legend(fontsize=12, loc='upper right')
-    ax.grid(True, alpha=0.5, which='both', linestyle='--')
-    
-    add_footer_and_logos(fig, root_dir)
-    plt.subplots_adjust(bottom=0.20, top=0.90)
-    
-    os.makedirs(save_dir, exist_ok=True)
-    plt.savefig(os.path.join(save_dir, f'QA_Molecular_{prefix}_{channel_name.replace(" ", "_")}.webp'), dpi=120)
-    
-    if config.get('processing', {}).get('interactive_qa', True): plt.show(block=True)
-    plt.close(fig)
-
-
-def plot_kfs_results(alt_km, beta_mean, beta_std, ext_mean, ext_std, config, channel_name, save_dir, prefix, ds, root_dir):
-    date_title, date_footer = extract_datetime_strings(ds)
-    fig = plt.figure(figsize=[15, 7.5])
-    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1], wspace=0.15)
-    
-    fig.suptitle(f"Aerosol Optical Properties (KFS Monte Carlo) - {channel_name}\n{date_title}", fontsize=15, fontweight='bold', y=0.96)
-    
-    color_map = {"532": "forestgreen", "355": "rebeccapurple", "1064": "crimson"}
-    plot_color = color_map.get(next((k for k in color_map.keys() if k in channel_name), "black"), "black")
-
-    # Limit plot to the troposphere/lower stratosphere where aerosols reside
-    max_plot_alt = 15.0 
-    valid_idx = alt_km <= max_plot_alt
-    alt_cut = alt_km[valid_idx]
-    scale_beta = 1e6
-    
-    # AXIS 1: Backscatter (Beta)
-    ax1 = plt.subplot(gs[0])
-    b_mean = beta_mean[valid_idx] * scale_beta
-    b_std = beta_std[valid_idx] * scale_beta
-    
-    ax1.plot(b_mean, alt_cut, color=plot_color, linewidth=2.5, label=r'Backscatter ($\beta_{aer}$)')
-    ax1.fill_betweenx(alt_cut, b_mean - b_std, b_mean + b_std, color=plot_color, alpha=0.25, edgecolor="none")
-    ax1.set_xlabel(r'Aerosol Backscatter [$Mm^{-1} sr^{-1}$]', fontsize=13, fontweight='bold', labelpad=10)
-    ax1.set_ylabel('Altitude [km a.g.l.]', fontsize=13, fontweight='bold')
-    ax1.grid(True, linestyle='--', alpha=0.6, which='both')
-    
-    ax1.set_xscale('log')
-    # Dynamic scaling: prevents math domain errors on log scale for values <= 0
-    b_min_valid = np.nanmin(b_mean[b_mean > 0]) if np.any(b_mean > 0) else 1e-4
-    ax1.set_xlim(left=max(1e-4, b_min_valid * 0.1), right=np.nanmax(b_mean) * 2.0)
-    ax1.legend(fontsize=12, loc='upper right')
-
-    # AXIS 2: Extinction (Alpha)
-    ax2 = plt.subplot(gs[1], sharey=ax1)
-    e_mean = ext_mean[valid_idx] * scale_beta
-    e_std = ext_std[valid_idx] * scale_beta
-    
-    ax2.plot(e_mean, alt_cut, color=plot_color, linewidth=2.5, label=r'Extinction ($\alpha_{aer}$)')
-    ax2.fill_betweenx(alt_cut, e_mean - e_std, e_mean + e_std, color=plot_color, alpha=0.25, edgecolor="none")
-    ax2.set_xlabel(r'Aerosol Extinction [$Mm^{-1}$]', fontsize=13, fontweight='bold', labelpad=10)
-    plt.setp(ax2.get_yticklabels(), visible=False)
-    ax2.grid(True, linestyle='--', alpha=0.6, which='both')
-    
-    ax2.set_xscale('log')
-    e_min_valid = np.nanmin(e_mean[e_mean > 0]) if np.any(e_mean > 0) else 1e-3
-    ax2.set_xlim(left=max(1e-3, e_min_valid * 0.1), right=np.nanmax(e_mean) * 2.0)
-    ax2.legend(fontsize=12, loc='upper right')
-
-    # FORMATTING & EXPORT
-    add_footer_and_logos(fig, root_dir)
-    plt.subplots_adjust(bottom=0.18, top=0.88) 
-    
-    os.makedirs(save_dir, exist_ok=True)
-    plt.savefig(os.path.join(save_dir, f'L2_OpticalProps_{prefix}_{channel_name.replace(" ", "_")}.webp'), dpi=120)
-    
-    if config.get('processing', {}).get('interactive_qa', True): 
-        plt.show(block=True)
+    out_path = Path(output_folder) / f'GlobalMeanRCS_{file_name_prefix}.webp'
+    plt.savefig(out_path, dpi=120)
     plt.close(fig)
