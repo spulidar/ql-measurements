@@ -393,7 +393,7 @@ def fetch_surface_weather(dt_utc: datetime, lat: float, lon: float):
         f"hourly=temperature_2m,surface_pressure,relative_humidity_2m,cloud_cover,wind_speed_10m"
     )
     
-    req = urllib.request.Request(url, headers={'User-Agent': 'SPU-Lidar})
+    req = urllib.request.Request(url, headers={'User-Agent': 'SPU-Lidar'})
     
     # Timeout explicit of 10s. If it fails, tenacity retries up to 3 times.
     with urllib.request.urlopen(req, timeout=10) as response:
