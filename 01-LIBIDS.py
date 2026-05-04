@@ -7,6 +7,7 @@ periods (UTC to Local Time), and converts valid data into SCC compliant NetCDFs.
 """
 
 import os
+from pathlib import Path
 import traceback
 import logging
 import pandas as pd
@@ -83,20 +84,20 @@ def build_netcdf(netcdf_path: str, save_id: str, period: str, lidar_data: dict, 
         
         with nc.Dataset(netcdf_path, 'w', format='NETCDF4') as ds:
             # Global Attributes 
-            ds.Measurement_ID = save_id
-            ds.System = "SPU-Lidar"
-            ds.Latitude_degrees_north = float(config['physics'].get('latitude', -23.561))
-            ds.Longitude_degrees_east = float(config['physics'].get('longitude', -46.735))
-            ds.Accumulated_Shots = lidar_data.get('shots')
-            
-            ds.RawData_Start_Date = min_start_utc.strftime("%Y%m%d")
-            ds.RawData_Start_Time_UT = min_start_utc.strftime("%H%M%S")
-            ds.RawData_Stop_Time_UT = max_stop_utc.strftime("%H%M%S")
-
-            # Thermodynamics injected globally for Rayleigh calculation later
-            ds.Temperature_C = weather_data.get('temperature_c', 25.0)
-            ds.Pressure_hPa = weather_data.get('pressure_hpa', 940.0)
-            ds.CloudCover_percent = weather_data.get('cloud_cover_percent')
+            global_attrs = {
+                "Measurement_ID": save_id,
+                "System": "SPU-Lidar",
+                "Latitude_degrees_north": float(config['physics'].get('latitude', -23.561)),
+                "Longitude_degrees_east": float(config['physics'].get('longitude', -46.735)),
+                "Accumulated_Shots": lidar_data.get('shots', 0),
+                "RawData_Start_Date": min_start_utc.strftime("%Y%m%d"),
+                "RawData_Start_Time_UT": min_start_utc.strftime("%H%M%S"),
+                "RawData_Stop_Time_UT": max_stop_utc.strftime("%H%M%S"),
+                "Temperature_C": weather_data.get('temperature_c', 25.0),
+                "Pressure_hPa": weather_data.get('pressure_hpa', 940.0),
+                "CloudCover_percent": weather_data.get('cloud_cover_percent', 0.0)
+            }
+            ds.setncatts(global_attrs)
             
             # Dimensions
             num_times = len(start_times_epoch)
@@ -139,7 +140,7 @@ def build_netcdf(netcdf_path: str, save_id: str, period: str, lidar_data: dict, 
                 
             raw_lidar_data[:] = stacked_tensor
             
-            # Dark Current / Background Profile Injection
+            # Dark Current Profile Injection
             # If the group contains dark current files, we parse them and append to the NetCDF
             df_dc = group_df[group_df["meas_type"] == "dark_current"]
             
@@ -172,37 +173,33 @@ def process_level_0(config: dict, logger: logging.Logger):
     """
     Main orchestrator for Level 0 processing.
     """
-    # Build the Data Inventory (Scanning, UTC conversion, ID generation)
-    raw_dir = os.path.join(os.getcwd(), config['directories']['raw_data'])
-    df_raw = build_measurement_inventory(raw_dir, config, logger)
+    raw_dir = Path.cwd() / config['directories']['raw_data']
+    
+    df_raw = build_measurement_inventory(str(raw_dir), config, logger)
     
     if df_raw.empty:
         logger.info("=== No new data to process. LIBIDS finished successfully! ===")
         return
 
-    # Quality Control: Filter out inconsistent laser shots
     df_good = filter_laser_shots(df_raw, logger)
     if df_good.empty:
         logger.warning("=== No data survived quality control. Exiting. ===")
         return
 
-    # Process each measurement period
-    out_base_dir = os.path.join(os.getcwd(), config['directories']['processed_data'])
+    out_base_dir = Path.cwd() / config['directories']['processed_data']
     success_count = 0
     total_groups = len(df_good["meas_id"].unique())
 
     for meas_id, group_df in df_good.groupby("meas_id"):
-        # Format standardized SCC save ID (e.g., 20230815sa12)
         save_id = f"{meas_id[:8]}sa{meas_id[8:]}"
         year_str, month_str = save_id[:4], save_id[4:6]
         
-        out_dir = os.path.join(out_base_dir, year_str, month_str, save_id)
-        netcdf_path = os.path.join(out_dir, f"{save_id}.nc")
+        out_dir = out_base_dir / year_str / month_str / save_id
+        netcdf_path = out_dir / f"{save_id}.nc"
 
         logger.info(f"Processing group [{save_id}]...")
 
         try:
-            # Fetch surface weather for Rayleigh molecular calibration
             lat = float(config['physics'].get('latitude', -23.561))
             lon = float(config['physics'].get('longitude', -46.735))
             dt_utc_mean = group_df['start_time_utc'].iloc[len(group_df) // 2].to_pydatetime()
@@ -218,7 +215,6 @@ def process_level_0(config: dict, logger: logging.Logger):
                     'wind_speed_kmh': 0.0
                 }
 
-            # Parse raw binary files into numpy tensors
             df_meas = group_df[group_df["meas_type"] == "measurements"]
             files_meas = df_meas["filepath"].tolist()
 
@@ -226,13 +222,12 @@ def process_level_0(config: dict, logger: logging.Logger):
                 logger.warning(f"  -> [{save_id}] No measurement files found. Skipping.")
                 continue
                 
-            # Extracts raw arrays: Time x Range x Channels (Analog & Photon Counting)
             lidar_data_tensors = parse_licel_group(files_meas, logger)
 
-            # Build SCC-compliant NetCDF 
             ensure_directories(out_dir)
+            
             build_netcdf(
-                netcdf_path=netcdf_path,
+                netcdf_path=str(netcdf_path),
                 save_id=save_id,
                 period=meas_id[8:],          
                 lidar_data=lidar_data_tensors,
