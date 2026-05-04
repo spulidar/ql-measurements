@@ -7,13 +7,14 @@ and Level 2 (Rayleigh Scattering, Signal Gluing, Monte Carlo KFS Inversion).
 @author: Luisa Mello, Fábio J. S. Lopes, Alexandre C. Yoshida, Alexandre Cacheffo
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 import xarray as xr
-from scipy.integrate import cumulative_trapezoid
+from numba import njit, prange
 
 # ==========================================
-# Level  1 functions
+# Level 1 functions
 # ==========================================
 
 def classify_period(local_dt):
@@ -99,10 +100,6 @@ def apply_instrumental_corrections(sig, z_da, shots, bin_time_us, deadtime, shif
     
     return sig_c, err_c, rcs, err_rcs
 
-# ==========================================
-# Level 2 functions
-# ==========================================
-
 def calculate_pbl_height_gradient(rcs_signal, alt_m, min_search_m=500.0, max_search_m=4000.0, smooth_bins=15):
     """
     Estimates the Planetary Boundary Layer (PBL) height using the Gradient Method.
@@ -119,14 +116,20 @@ def calculate_pbl_height_gradient(rcs_signal, alt_m, min_search_m=500.0, max_sea
     search_alt = alt_m[valid_idx]
     search_rcs = rcs_signal[valid_idx]
     
-    # Smooth the signal heavily to prevent noise from creating false gradients
-    smoothed_rcs = pd.Series(search_rcs).rolling(window=smooth_bins, center=True, min_periods=1).mean().values
+    # Smooth the signal
+    window = np.ones(smooth_bins) / smooth_bins
+    smoothed_rcs = np.convolve(search_rcs, window, mode='same')
     
     # Calculate the first derivative wrt altitude (dRCS / dz)
     gradient = np.gradient(smoothed_rcs, search_alt)
     
-    # Find the strongest negative gradient
-    min_grad_idx = np.argmin(gradient)
+    # Avoid finding false minimums at the padded edges of the convolution
+    edge_trim = smooth_bins // 2
+    if len(gradient) > 2 * edge_trim:
+        search_region = gradient[edge_trim:-edge_trim]
+        min_grad_idx = np.argmin(search_region) + edge_trim
+    else:
+        min_grad_idx = np.argmin(gradient)
     
     # Safety check: ensure we actually found a drop-off (negative gradient)
     if gradient[min_grad_idx] >= 0:
@@ -303,46 +306,68 @@ def find_optimal_reference_altitude(rcs, beta_mol, altitude, min_alt=5.0, max_al
         
     return best_idx
 
-# ======SIGNAL GLUING (ANALOG + PHOTON)=====
+# ==========================================
+# Level 2 functions
+# ==========================================
 
-def slide_glue_signals(analog_sig, pc_sig, altitude, window_size=150, min_corr=0.90):
+@njit(fastmath=True)
+def _slide_glue_core(an_vals, pc_vals, window_size, min_corr):
     """
-    Performs a sliding window correlation to find the optimal gluing region 
-    between Analog and Photon Counting (PC) signals.
+    Compiled C-level core for the sliding window correlation and linear regression.
     """
+    search_end = len(an_vals) - window_size
     best_idx = -1
     best_corr = -1.0
     best_slope = 1.0
     best_intercept = 0.0
     
-    # Ensure standard 1D numpy arrays
-    an_vals = np.asarray(analog_sig)
-    pc_vals = np.asarray(pc_sig)
-    
-    search_end = len(an_vals) - window_size
-    
     for i in range(search_end):
         an_window = an_vals[i : i + window_size]
         pc_window = pc_vals[i : i + window_size]
         
-        # Skip regions with flatlines, saturation limits, or NaNs
-        if np.any(np.isnan(an_window)) or np.any(np.isnan(pc_window)): 
+        # Skip regions with NaNs
+        if np.isnan(an_window).any() or np.isnan(pc_window).any():
             continue
-        if np.std(an_window) == 0 or np.std(pc_window) == 0: 
+            
+        an_mean = np.mean(an_window)
+        pc_mean = np.mean(pc_window)
+        an_std = np.std(an_window)
+        pc_std = np.std(pc_window)
+        
+        # Skip flatlines
+        if an_std == 0 or pc_std == 0: 
             continue
         
-        corr = np.corrcoef(an_window, pc_window)[0, 1]
+        # Manual Pearson correlation computation
+        cov = np.mean((an_window - an_mean) * (pc_window - pc_mean))
+        corr = cov / (an_std * pc_std)
         
         if corr > best_corr:
             best_corr = corr
             best_idx = i
             
             # Linear regression mapping: PC = slope * Analog + intercept
-            slope, intercept = np.polyfit(an_window, pc_window, 1)
-            best_slope = slope
-            best_intercept = intercept
+            an_var = np.var(an_window)
+            if an_var > 0:
+                best_slope = cov / an_var
+                best_intercept = pc_mean - (best_slope * an_mean)
+                
+    return best_idx, best_corr, best_slope, best_intercept
+
+def slide_glue_signals(analog_sig, pc_sig, altitude, window_size=150, min_corr=0.90):
+    """
+    Performs a sliding window correlation to find the optimal gluing region 
+    between Analog and Photon Counting (PC) signals. Wrapper for Numba core.
+    """
+    # Ensure standard 1D numpy contiguous arrays for Numba compatibility
+    an_vals = np.ascontiguousarray(analog_sig, dtype=np.float64)
+    pc_vals = np.ascontiguousarray(pc_sig, dtype=np.float64)
+    
+    best_idx, best_corr, best_slope, best_intercept = _slide_glue_core(
+        an_vals, pc_vals, window_size, min_corr
+    )
             
-    if best_corr < min_corr:
+    if best_corr < min_corr or best_idx == -1:
         # Fallback if the atmospheric condition prevents valid correlation
         return pc_vals, -1, best_slope, best_intercept
         
@@ -353,39 +378,34 @@ def slide_glue_signals(analog_sig, pc_sig, altitude, window_size=150, min_corr=0
     
     return glued_sig, split_point, best_slope, best_intercept
 
-# == OPTICAL INVERSION (KFS MONTE CARLO)====
 
-def kfs_inversion_monte_carlo(rcs, altitude, beta_mol, lr_base, lr_std=10.0, ref_idx=-1, n_iterations=100):
+@njit(parallel=True, fastmath=True)
+def _kfs_monte_carlo_core(rcs, beta_mol, dz, lr_base, lr_std, beta_total_ref, ref_idx, n_iterations, lr_mol):
     """
-    Discrete Fernald (1984) backward integration to retrieve aerosol optical properties.
-    Incorporates Monte Carlo perturbations for Lidar Ratio and calibration reference
-    to strictly propagate measurement uncertainties.
-    
-    Includes mathematical singularity protection to prevent integrators from blowing up.
+    Compiled C-level core for Fernald backward integration using multi-threading (prange).
     """
     n_bins = len(rcs)
-    dz = np.mean(np.diff(altitude)) * 1000.0  # Spatial resolution strictly in meters
-    lr_mol = 8.0 * np.pi / 3.0                # Theoretical Rayleigh Lidar Ratio
     
+    # Pre-allocate output matrices for Numba compatibility
     beta_aer_sims = np.full((n_iterations, n_bins), np.nan)
     alpha_aer_sims = np.full((n_iterations, n_bins), np.nan)
     
-    # Fundamental boundary assumption: Aerosol-free atmosphere at calibration altitude
-    beta_total_ref = beta_mol[ref_idx] 
-    
-    for i in range(n_iterations):
+    # Distribute Monte Carlo iterations across available CPU cores
+    for i in prange(n_iterations):
+        
         # 1. Perturb the assumed aerosol Lidar Ratio
         lr_sim = np.random.normal(lr_base, lr_std)
         if lr_sim < 10.0: 
-            lr_sim = 10.0  # Physical lower boundary constraint for tropospheric aerosols
+            lr_sim = 10.0  # Physical lower boundary constraint
             
         # 2. Perturb the molecular calibration reference by 10%
         beta_ref_sim = np.random.normal(beta_total_ref, beta_total_ref * 0.10)
         
+        # Initialize the state vector for this specific simulation
         beta_aer = np.full(n_bins, np.nan)
         beta_aer[ref_idx] = max(0.0, beta_ref_sim - beta_mol[ref_idx])
         
-        # 3. Iterative Backward Integration 
+        # 3. Iterative Backward Integration
         for j in range(ref_idx - 1, -1, -1):
             
             # Fernald discrete attenuation term (A_j)
@@ -409,21 +429,44 @@ def kfs_inversion_monte_carlo(rcs, altitude, beta_mol, lr_base, lr_std=10.0, ref
                 
             beta_aer_step = (p_step / denom) - beta_mol[j]
             
-            # Physical constraint: Backscatter cannot be severely negative.
-            # Small negative variations are permitted exclusively due to statistical noise.
+            # Physical constraint: Limit artificial negative backscatter due to noise
             if beta_aer_step < -beta_mol[j]: 
                 beta_aer_step = -beta_mol[j] * 0.99
                 
             beta_aer[j] = beta_aer_step
             
+        # Store results of this iteration
         beta_aer_sims[i, :] = beta_aer
         alpha_aer_sims[i, :] = beta_aer * lr_sim
         
+    return beta_aer_sims, alpha_aer_sims
+
+
+def kfs_inversion_monte_carlo(rcs, altitude, beta_mol, lr_base, lr_std=10.0, ref_idx=-1, n_iterations=100):
+    """
+    Python wrapper to prepare data for the Numba-compiled KFS core and 
+    handle statistical reduction.
+    """
+    # Extract spatial resolution strictly in meters
+    dz = np.mean(np.diff(altitude)) * 1000.0  
+    lr_mol = 8.0 * np.pi / 3.0
+    beta_total_ref = beta_mol[ref_idx] 
+    
+    # Ensure inputs are contiguous float numpy arrays (Numba requirement)
+    rcs_arr = np.ascontiguousarray(rcs, dtype=np.float64)
+    beta_mol_arr = np.ascontiguousarray(beta_mol, dtype=np.float64)
+    
+    # Call the JIT compiled motor
+    beta_sims, alpha_sims = _kfs_monte_carlo_core(
+        rcs_arr, beta_mol_arr, dz, lr_base, lr_std, beta_total_ref, ref_idx, n_iterations, lr_mol
+    )
+    
     # Collapse the Monte Carlo matrix into robust statistical vectors
-    beta_mean = np.nanmean(beta_aer_sims, axis=0)
-    beta_std = np.nanstd(beta_aer_sims, axis=0)
-    alpha_mean = np.nanmean(alpha_aer_sims, axis=0)
-    alpha_std = np.nanstd(alpha_aer_sims, axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning) # Ignore mean of empty slice warnings
+        beta_mean = np.nanmean(beta_sims, axis=0)
+        beta_std = np.nanstd(beta_sims, axis=0)
+        alpha_mean = np.nanmean(alpha_sims, axis=0)
+        alpha_std = np.nanstd(alpha_sims, axis=0)
     
     return beta_mean, beta_std, alpha_mean, alpha_std
-
