@@ -21,10 +21,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from siphon.simplewebservice.wyoming import WyomingUpperAir
 import urllib.request, json
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Import MILGRAU core functions 
 from functions.physics_utils import classify_period, get_night_date
-
 
 def load_config(config_path="config.yaml"):
     """
@@ -78,11 +78,10 @@ def ensure_directories(*directories):
     Safely creates multiple directories if they do not exist.
     """
     for d in directories:
-        if not os.path.exists(d):
-            try:
-                os.makedirs(d)
-            except OSError as e:
-                logging.error(f"Failed to create directory {d}: {e}")
+        try:
+            Path(d).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logging.error(f"Failed to create directory {d}: {e}")
 
 def scan_raw_files(datadir_name, logger=None):
     """
@@ -335,7 +334,11 @@ def parse_licel_group(filepaths: list, logger: logging.Logger) -> dict:
         'shots': accumulated_shots,
         'channels': list(tensor_dict.keys())
     }
-   
+
+def return_none_on_failure(retry_state):
+    return None
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry_error_callback=return_none_on_failure)
 def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="01-data/wyoming_cache"):
     """
     Fetches Wyoming radiosonde data (Pressure, Altitude, Temperature) 
@@ -343,79 +346,69 @@ def fetch_wyoming_radiosonde(measurement_dt_utc, station_id, logger, cache_dir="
     Uses a local cache to prevent redundant downloads and timeouts.
     Returns a clean Pandas DataFrame or None if the server fails.
     """
-    # Determine the closest sounding time (00Z or 12Z)
     hour_utc = measurement_dt_utc.hour
     if 0 <= hour_utc <= 8:
         target_dt = measurement_dt_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     elif 9 <= hour_utc <= 20:
         target_dt = measurement_dt_utc.replace(hour=12, minute=0, second=0, microsecond=0)
-    else: # 21 to 23 belongs to the next day's 00Z sounding
+    else: 
         target_dt = (measurement_dt_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         
     year = target_dt.strftime('%Y')
     month = target_dt.strftime('%m')
     
     # Setup local cache path based on the sounding time
-    cache_path = Path(os.getcwd()) / cache_dir / year / month
+    cache_path = Path.cwd() / cache_dir / year / month
     cache_path.mkdir(parents=True, exist_ok=True)
     
     cache_filename = f"radiosonde_{station_id}_{target_dt.strftime('%Y%m%d_%H')}Z.csv"
     cache_file = cache_path / cache_filename
     
-    # Check if we already have this specific sounding in our local cache
     if cache_file.exists():
         logger.info(f"  -> [RADIOSONDE] Cached sounding found: {cache_filename}. Skipping download.")
         return pd.read_csv(cache_file)
 
     logger.info(f"  -> [RADIOSONDE] Fetching {target_dt.strftime('%Y-%m-%d %H:%M')}Z for station {station_id} via Siphon...")
     
-    try:
-        # Fetch data 
-        df_raw = WyomingUpperAir.request_data(target_dt, station_id)
-        df = df_raw.drop_duplicates(subset=['height'], keep='first').sort_values('height')
-        df.to_csv(cache_file, index=False)
-        logger.info("  -> [OK] Radiosonde data successfully fetched and cached!")
-        
-        return df
-        
-    except Exception as e:
-        logger.warning(f"  -> [RADIOSONDE ERROR] Failed to fetch data from Wyoming via Siphon: {e}")
-        return None
+    df_raw = WyomingUpperAir.request_data(target_dt, station_id)
+    df = df_raw.drop_duplicates(subset=['height'], keep='first').sort_values('height')
+    df.to_csv(cache_file, index=False)
+    logger.info("  -> [OK] Radiosonde data successfully fetched and cached!")
+    
+    return df
 
-def fetch_surface_weather(dt_utc: datetime, lat: float, lon: float) -> Optional[Dict[str, float]]:
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry_error_callback=return_none_on_failure)
+def fetch_surface_weather(dt_utc: datetime, lat: float, lon: float):
     """
     Fetches historical surface weather from the Open-Meteo Archive API.
     Returns a dictionary with temperature, pressure, humidity, cloud cover, and wind.
     """
-    try:
-        # Format time to ISO 8601 hourly format required by Open-Meteo
-        target_time = dt_utc.strftime("%Y-%m-%dT%H:00")
-        target_date = dt_utc.strftime("%Y-%m-%d")
+    target_time = dt_utc.strftime("%Y-%m-%dT%H:00")
+    target_date = dt_utc.strftime("%Y-%m-%d")
+    
+    url = (
+        f"https://archive-api.open-meteo.com/v1/archive?"
+        f"latitude={lat}&longitude={lon}&"
+        f"start_date={target_date}&end_date={target_date}&"
+        f"hourly=temperature_2m,surface_pressure,relative_humidity_2m,cloud_cover,wind_speed_10m"
+    )
+    
+    req = urllib.request.Request(url, headers={'User-Agent': 'SPU-Lidar})
+    
+    # Timeout explicit of 10s. If it fails, tenacity retries up to 3 times.
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = json.loads(response.read().decode('utf-8'))
         
-        # ERA5 Archive API URL with extended meteorological variables
-        url = (
-            f"https://archive-api.open-meteo.com/v1/archive?"
-            f"latitude={lat}&longitude={lon}&"
-            f"start_date={target_date}&end_date={target_date}&"
-            f"hourly=temperature_2m,surface_pressure,relative_humidity_2m,cloud_cover,wind_speed_10m"
-        )
+    times = data.get('hourly', {}).get('time', [])
+    
+    if target_time in times:
+        idx = times.index(target_time)
+        return {
+            'temperature_c': data['hourly']['temperature_2m'][idx],
+            'pressure_hpa': data['hourly']['surface_pressure'][idx],
+            'relative_humidity_percent': data['hourly']['relative_humidity_2m'][idx],
+            'cloud_cover_percent': data['hourly']['cloud_cover'][idx],
+            'wind_speed_kmh': data['hourly']['wind_speed_10m'][idx]
+        }
         
-        req = urllib.request.Request(url, headers={'User-Agent': 'MILGRAU-Lidar-Bot/1.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            
-        times = data.get('hourly', {}).get('time', [])
-        
-        if target_time in times:
-            idx = times.index(target_time)
-            return {
-                'temperature_c': data['hourly']['temperature_2m'][idx],
-                'pressure_hpa': data['hourly']['surface_pressure'][idx],
-                'relative_humidity_percent': data['hourly']['relative_humidity_2m'][idx],
-                'cloud_cover_percent': data['hourly']['cloud_cover'][idx],
-                'wind_speed_kmh': data['hourly']['wind_speed_10m'][idx]
-            }
-            
-        return None
-    except Exception:
-        return None
+    return None
