@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "milgrau"
+version = "0.1.0"
+description = "MILGRAU processing suite for SPU-Lidar atmospheric products"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Luisa Mello" },
+  { name = "Fábio J. S. Lopes" },
+  { name = "Alexandre C. Yoshida" },
+  { name = "Alexandre Cacheffo" },
+]
+dependencies = [
+  "numpy>=1.24.0",
+  "pandas>=2.0.0",
+  "xarray>=2023.1.0",
+  "netCDF4>=1.6.0",
+  "scipy>=1.10.0",
+  "numba>=0.58.0",
+  "matplotlib>=3.7.0",
+  "boto3>=1.26.0",
+  "siphon",
+  "tenacity>=8.2.0",
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+milgrau-libids = "scripts.run_libids:main"
+milgrau-lipancora = "scripts.run_lipancora:main"
+milgrau-liracos = "scripts.run_liracos:main"
+milgrau-lebear = "scripts.run_lebear:main"
+
+[tool.setuptools.packages.find]
+include = ["milgrau*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
