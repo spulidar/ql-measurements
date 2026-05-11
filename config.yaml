@@ -2,9 +2,34 @@
 # MILGRAU Suite Configuration File
 # ==========================================
 
+project:
+  name: "MILGRAU"
+  station_name: "SPU-Lidar"
+  institution: "IPEN/USP"
+  timezone: "America/Sao_Paulo"
+
 processing:
   incremental: false
-  interactive_qa: true               
+  interactive_qa: true
+  console_level: "INFO"
+  file_level: "INFO"
+
+  # Level 0 quality control
+  laser_shot_tolerance_fraction: 0.002
+  dark_current_max_association_hours: 6.0
+
+  # Raw-file safety policy
+  quarantine_spurious_files: true
+  delete_spurious_files: false
+  spurious_extensions:
+    - ".dat"
+    - ".dpp"
+    - ".zip"
+  quarantine_dir: "01-data/_quarantine"
+
+  # Backward-compatible worker settings for legacy scripts
+  max_workers_io: 1
+  max_workers_cpu: 1
 
 directories:
   raw_data: "01-data"
@@ -12,28 +37,32 @@ directories:
   site_output: "measurements"
   log_dir: "logs"
 
-physics:
-  # Base properties
-  vertical_resolution_m: 7.5
-  speed_of_light: 299792458.0
-
-  # Station Location (IPEN/USP - São Paulo)
+site:
   latitude: -23.5615
   longitude: -46.7383
-  
-  # Default surface weather for Level 0 NetCDF SCC format (Fallback)
+  station_altitude_m: 760.0
+  timezone: "America/Sao_Paulo"
+
+physics:
+  latitude: -23.5615
+  longitude: -46.7383
+  vertical_resolution_m: 7.5
+  speed_of_light_m_s: 299792458.0
+  speed_of_light: 299792458.0
+
   default_surface_temp_c: 25.0
   default_surface_pressure_hpa: 940.0
 
-  # Sky Background
+  bg_start_m: 29000.0
+  bg_stop_m: 29999.0
   bg_start: 29000
   bg_stop: 29999
 
-  # PBL detection boundaries
   pbl_min_search_m: 500.0
   pbl_max_search_m: 4000.0
-  
-  # Channel constants: [deadtime_us, bin_shift, bg_offset_mV]
+  pbl_smooth_bins: 15
+
+  # Channel constants: [deadtime_us, bin_shift, background_offset]
   channels:
     "355.PC": [0.0020, -2, 0.0005]
     "355.AN": [0.0000,  8, 0.0000]
@@ -48,73 +77,118 @@ physics:
     "1064.PC": [0.0000,  0, 0.0000]
     "1064.AN": [0.0000,  1, 0.0000]
 
+hardware:
+  name_to_id:
+    day:
+      "1064.AN": 934
+      "1064.PC": 935
+      "532.AN": 1593
+      "532.PC": 716
+      "530.AN": 1595
+      "530.PC": 1557
+      "355.AN": 1594
+      "355.PC": 736
+      "387.AN": 1596
+      "387.PC": 748
+      "408.AN": 1446
+      "408.PC": 1447
+    night:
+      "1064.AN": 934
+      "1064.PC": 935
+      "532.AN": 722
+      "532.PC": 716
+      "530.AN": 1558
+      "530.PC": 1557
+      "355.AN": 737
+      "355.PC": 736
+      "387.AN": 749
+      "387.PC": 748
+      "408.AN": 1446
+      "408.PC": 1447
+
+radiosonde:
+  station_id: "83779"
+  station_name: "Campo de Marte"
+  fallback_to_standard_atmosphere: true
+  fallback_to_standard: true
+  cache_dir: "01-data/wyoming_cache"
+
+surface_weather:
+  provider: "open-meteo"
+  cache_dir: "01-data/openmeteo_cache"
+  fallback_to_config_defaults: true
+
 visualization:
+  output_format: "webp"
+  dpi: 120
   altitude_ranges_km: [5, 15, 30]
   channels_to_plot:
     - "1064.AN"
     - "532.AN"
     - "532.PC"
     - "355.PC"
-    - "355.PC"
+  quicklook:
+    show_pbl: true
+    show_tropopause: true
+    mean_profile_smooth_bins: 20
+  level2_qa:
+    enabled: true
+    max_altitude_km: 15.0
+    generate_gluing_qa: true
+    generate_molecular_fit_qa: true
+    generate_kfs_qa: true
 
-hardware:
-
-  name_to_id:
-      day: # 'am', 'pm'
-        "1064.AN": 934
-        "1064.PC": 935
-        "532.AN": 1593  
-        "532.PC": 716
-        "530.AN": 1595
-        "530.PC": 1557
-        "355.AN": 1594
-        "355.PC": 736
-        "387.AN": 1596
-        "387.PC": 748
-        "408.AN": 1446
-        "408.PC": 1447
-        
-      night: # 'nt'
-        "1064.AN": 934
-        "1064.PC": 935
-        "532.AN": 722   
-        "532.PC": 716
-        "530.AN": 1558
-        "530.PC": 1557
-        "355.AN": 737
-        "355.PC": 736
-        "387.AN": 749
-        "387.PC": 748
-        "408.AN": 1446
-        "408.PC": 1447
-
-# ==========================================
-# PHASE 2: INVERSION & RADIOSONDE (LEBEAR)
-# ==========================================
-
-radiosonde:
-  station_id: "83779"                 # Wyoming ID for São Paulo (Campo de Marte)
-  fallback_to_standard: true          # Use US Standard Atmosphere if download fails
-  
 inversion:
-  monte_carlo_iterations: 100         # Number of perturbations for error propagation
-  
+  enabled: true
+  interactive_qa: true
+  wavelengths_to_process: [355, 532]
+  products:
+    save_glued_signal: true
+    save_molecular_profile: true
+    save_aerosol_backscatter: true
+    save_aerosol_extinction: true
+    save_uncertainty: true
+    save_quality_flags: true
+  monte_carlo_iterations: 300
+  random_seed: 1729
+  beta_ref_relative_std: 0.10
+  aerosol_ref_fraction: 0.0
+  min_lidar_ratio_sr: 10.0
+  allow_negative_aerosol: false
   molecular_fit:
-    ref_alt_min_m: 5000.0             # Initial altitude range for molecular calibration
-    ref_alt_max_m: 9000.0             # Final altitude range for molecular calibration
-    lidar_ratio_molecular: 8.37758    # Standard Rayleigh LR (8 * pi / 3)
-  
+    ref_alt_min_m: 5000.0
+    ref_alt_max_m: 9000.0
+    ref_window_bins: 50
+    lidar_ratio_molecular_sr: 8.377580409572781
+    lidar_ratio_molecular: 8.377580409572781
+    max_relative_slope: 0.05
+    max_relative_variance: 0.10
+    min_valid_fraction: 0.50
   gluing:
+    enabled: true
     window_length_bins: 150
     correlation_threshold: 0.95
     intercept_threshold: 0.5
     gaussian_threshold: 0.1
     minmax_threshold: 0.5
-    search_min_idx: 400               # 400 * 7.5m = 3 km
-    search_max_idx: 1000              # 1000 * 7.5m = 7.5 km
-
-
-  # Mean Aerosol Lidar Ratios (LR) per wavelength and month (01 to 12)
+    search_min_idx: 400
+    search_max_idx: 1000
+    fallback_to_photon_counting: true
+  cloud_screening:
+    enabled: true
+    min_altitude_m: 500.0
+    max_altitude_m: 15000.0
+    smooth_bins: 9
+    snr_threshold: 8.0
+    robust_z_threshold: 6.0
+    min_cloud_bins: 3
+    vertical_dilation_bins: 2
+    exclude_clouds_from_reference_fit: true
+    stop_kfs_below_optically_thick_clouds: true
+  lidar_ratio_std_sr:
+    "355": 15.0
+    "532": 10.0
+    "1064": 10.0
   lidar_ratios:
     "355":
       "01": 75.95
@@ -155,3 +229,52 @@ inversion:
       "10": 33.44
       "11": 30.83
       "12": 41.43
+  lidar_ratios_sr:
+    "355":
+      "01": 75.95
+      "02": 116.08
+      "03": 93.00
+      "04": 96.05
+      "05": 81.16
+      "06": 78.26
+      "07": 78.21
+      "08": 81.14
+      "09": 84.69
+      "10": 84.87
+      "11": 91.06
+      "12": 99.35
+    "532":
+      "01": 58.11
+      "02": 66.06
+      "03": 61.93
+      "04": 69.50
+      "05": 62.07
+      "06": 61.73
+      "07": 58.88
+      "08": 55.05
+      "09": 55.78
+      "10": 57.83
+      "11": 57.11
+      "12": 75.17
+    "1064":
+      "01": 35.94
+      "02": 25.52
+      "03": 35.37
+      "04": 40.76
+      "05": 39.81
+      "06": 43.76
+      "07": 36.92
+      "08": 30.85
+      "09": 29.74
+      "10": 33.44
+      "11": 30.83
+      "12": 41.43
+
+website:
+  cloudflare_r2:
+    enabled: true
+    rebuild_html_only: false
+    sync_missing_uploads: false
+  github_pages:
+    enabled: true
+    calendar_file: "ql-measurement-calendar.html"
