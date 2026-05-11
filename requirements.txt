@@ -26,3 +26,6 @@ tenacity>=8.2.0
 
 # Configuration Management
 PyYAML>=6.0
+
+# Testing
+pytest>=7.0.0
