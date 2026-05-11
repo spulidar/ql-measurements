@@ -12,6 +12,7 @@ netCDF4>=1.6.0
 
 # Physics Integration & Signal Processing
 scipy>=1.10.0
+numba>=0.58.0
 
 # Visualization & QA Plots
 matplotlib>=3.7.0
@@ -19,8 +20,9 @@ matplotlib>=3.7.0
 # Cloud Publisher (Cloudflare R2 / AWS S3)
 boto3>=1.26.0
 
-# Web Scraping (Wyoming Radiosonde)
+# Web Scraping / Atmospheric Data
 siphon
+tenacity>=8.2.0
 
 # Configuration Management
 PyYAML>=6.0
