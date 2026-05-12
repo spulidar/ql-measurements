@@ -1,87 +1,378 @@
 # MILGRAU 🌩️
-**Multi-Indexed Lalinet GeneRAlized and Unified algorithm**
 
-MILGRAU was developed for the **SPU-Lidar Station** (São Paulo, Brazil), aiming to provide a fully automated, mathematically rigorous, and reproducible workflow. It is a robust, Python-based processing suite designed to handle raw atmospheric Lidar signals, transforming Level 0 binary data into Level 2 inverted optical properties.
-The pipeline adheres to the physical and statistical guidelines established by the **LALINET** network.
+**Multi-Indexed LALINET GeneRAlized and Unified algorithm**
 
----
+MILGRAU is a Python-based atmospheric lidar processing suite developed for the **SPU-Lidar Station** at **IPEN/USP, São Paulo, Brazil**.
 
-## Architecture & Modules
+The system is designed to process raw Licel lidar measurements into physically traceable atmospheric products, from raw signal standardization to range-corrected signals and, under development, Level 2 aerosol optical-property retrievals.
 
-The suite is divided into modular processing steps:
+MILGRAU follows a modular, configuration-driven architecture and prioritizes:
 
-| Module | Level | Description |
-| :--- | :--- | :--- |
-| **`01-LIBIDS`** | Level 0 | Scans raw Licel binary data, sanitizes files, corrects timezones (UTC), flags Dark Current, and exports to NetCDF. |
-| **`02-LIPANCORA`** | Level 1 | The physics engine. Dead-time correction, bin-shift alignment, DC/Sky background subtraction, and RCS generation with error tensors. |
-| **`03-LIRACOS`** | Viz | Renders high-quality RCS colormaps (quicklooks) and 1D mean profiles with $1\sigma$ shaded error bands. |
-| **`05-LEBEAR`** | Level 2 | *Work in Progress.* Signal gluing (Analog + PC), Rayleigh molecular calculation, and KFS optical property inversion. |
+- physically explicit lidar signal processing;
+- reproducible NetCDF data products;
+- uncertainty propagation through the processing chain;
+- LALINET-oriented scientific conventions;
+- external parameterization through `config.yaml`;
+- robust handling of noisy, cloudy and non-ideal atmospheric observations.
 
 ---
 
-## Project Structure
+## Scientific purpose
+
+Elastic and Raman lidar systems measure atmospheric backscattered radiation as a function of time and range. These raw signals are affected by instrumental response, photon-counting limitations, analog offsets, background radiation, dark current, incomplete overlap, clouds and atmospheric variability.
+
+MILGRAU organizes the treatment of these signals into processing levels:
+
+1. **Level 0** — raw Licel measurements are parsed, quality-controlled and standardized into NetCDF files compatible with SCC-style processing.
+2. **Level 1** — instrumental corrections are applied and Range Corrected Signals are generated with propagated uncertainties.
+3. **Visualization** — Level 1 products are rendered as quicklooks and mean profiles for scientific inspection.
+4. **Level 2** — aerosol optical properties will be retrieved through molecular calibration, signal gluing and Klett-Fernald-Sasano inversion.
+
+The main scientific objective is to provide a transparent processing framework for the SPU-Lidar Station that can support both operational monitoring and research-grade atmospheric analysis.
+
+---
+
+## Processing modules
+
+| Module | Level | Scientific role |
+|---|---:|---|
+| **LIBIDS** | Level 0 | Parses raw Licel binary files, builds measurement inventories, associates dark-current acquisitions, applies basic acquisition quality control and writes SCC-compatible Level 0 NetCDF files. |
+| **LIPANCORA** | Level 1 | Applies detector and instrumental corrections, propagates uncertainties, computes corrected signal and Range Corrected Signal, estimates PBL height and integrates radiosonde thermodynamic information. |
+| **LIRACOS** | Visualization | Generates Range Corrected Signal quicklooks, mean profiles and uncertainty bands for Level 1 scientific inspection. |
+| **LEBEAR** | Level 2 | Under development. Intended for Analog/Photon Counting gluing, Rayleigh molecular calibration, cloud screening and Klett-Fernald-Sasano aerosol backscatter/extinction retrieval. |
+
+---
+
+## Repository architecture
 
 ```text
 milgrau/
-├── functions/                   # Core processing libraries
-│   ├── core_io.py               # Input/Output handling
-│   ├── physics_utils.py         # Physical constants and algorithms
-│   └── viz_utils.py             # Plotting and dashboard logic
-├── img/                         # Logos and documentation assets
-├── logs/                        # Pipeline execution logs
-├── 01-LIBIDS.py                 # Level 0 processing script
-├── 02-LIPANCORA.py              # Level 1 physics engine
-├── 03-LIRACOS.py                # Quicklooks and 1D visualization
-├── config.yaml                  # Master configuration panel
-├── requirements.txt             # Python dependencies
+├── milgrau/
+│   ├── config/
+│   │   ├── schema.py
+│   │   └── loader.py
+│   ├── io/
+│   │   ├── filesystem.py
+│   │   ├── inventory.py
+│   │   ├── licel.py
+│   │   ├── logging_utils.py
+│   │   ├── netcdf.py
+│   │   ├── radiosonde.py
+│   │   └── weather.py
+│   ├── physics/
+│   │   ├── atmosphere.py
+│   │   ├── constants.py
+│   │   ├── corrections.py
+│   │   ├── gluing.py
+│   │   ├── kfs.py
+│   │   ├── molecular.py
+│   │   ├── pbl.py
+│   │   ├── time.py
+│   │   └── tropopause.py
+│   ├── pipeline/
+│   │   ├── libids.py
+│   │   ├── lipancora.py
+│   │   ├── liracos.py
+│   │   └── lebear.py
+│   └── visualization/
+│       ├── level2_qa.py
+│       ├── quicklooks.py
+│       └── style.py
+├── scripts/
+│   ├── run_libids.py
+│   ├── run_lipancora.py
+│   ├── run_liracos.py
+│   └── run_lebear.py
+├── config.yaml
+├── pyproject.toml
+├── requirements.txt
 └── README.md
+```
+
+The `milgrau/` package contains the scientific and technical implementation.  
+The `scripts/` directory contains the executable entry points for each processing stage.
+
+---
+
+## Level 0 — LIBIDS
+
+LIBIDS converts raw Licel measurements into standardized Level 0 NetCDF files.
+
+Main tasks:
+
+- scan raw measurement folders;
+- identify valid measurement and dark-current files;
+- parse Licel headers and binary payloads;
+- classify acquisitions into `am`, `pm` and `nt`;
+- associate dark-current profiles with nearby measurements;
+- reject invalid laser-shot acquisitions;
+- fetch or fallback to surface meteorological metadata;
+- write SCC-compatible Level 0 NetCDF products.
+
+The Level 0 product stores raw lidar data as:
+
+```text
+Raw_Lidar_Data(time, channels, points)
+```
+
+and includes metadata such as:
+
+```text
+Measurement_ID
+System
+Latitude_degrees_north
+Longitude_degrees_east
+Accumulated_Shots
+RawData_Start_Date
+RawData_Start_Time_UT
+RawData_Stop_Time_UT
+Temperature_C
+Pressure_hPa
+CloudCover_percent
+Source_File_Count
+Source_Files
+```
+
+When available, dark-current measurements are stored as:
+
+```text
+Background_Profile(time_bck, channels, points)
 ```
 
 ---
 
-## Installation
+## Level 1 — LIPANCORA
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/spulidar/milgrau.git
-   cd milgrau
-   ```
+LIPANCORA transforms Level 0 raw signals into corrected Level 1 lidar products.
 
-2. **Create and activate a virtual environment:**
-   ```bash
-   python -m venv venv
-   # On Linux/macOS:
-   source venv/bin/activate  
-   # On Windows:
-   venv\Scripts\activate
-   ```
+The correction sequence includes:
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+1. dark-current subtraction;
+2. photon-counting normalization;
+3. non-paralyzable dead-time correction;
+4. bin-shift alignment;
+5. sky-background subtraction;
+6. uncertainty propagation;
+7. range correction.
+
+The Level 1 NetCDF explicitly stores both the corrected signal and the Range Corrected Signal:
+
+```text
+corrected_signal(time, channel, altitude)
+corrected_signal_error(time, channel, altitude)
+
+range_corrected_signal(time, channel, altitude)
+range_corrected_signal_error(time, channel, altitude)
+```
+
+This distinction is scientifically important.
+
+`corrected_signal` is the lidar signal after instrumental corrections but before multiplication by range squared.
+
+`range_corrected_signal` is defined as:
+
+```text
+RCS(z) = corrected_signal(z) · z²
+```
+
+and is the primary signal used for Level 1 visualization and future Level 2 inversion.
+
+LIPANCORA also enriches the Level 1 product with atmospheric diagnostics:
+
+```text
+PBL_Height_km(time)
+Radiosonde_Temperature_K(radiosonde_altitude)
+Radiosonde_Pressure_hPa(radiosonde_altitude)
+```
+
+when radiosonde data are available.
 
 ---
 
-## Configuration & Usage
+## Atmospheric diagnostics
 
-MILGRAU uses a centralized `config.yaml` file to manage paths, thresholds, and hardware constants (like dead-time and bin-shift per channel). **Never hardcode these variables** in the processing scripts.
+### Planetary Boundary Layer
 
-1. **Edit Configuration:** Adjust `config.yaml` to match your directory structure and Lidar system parameters.
-2. **Data Placement:** Ensure your raw data is placed in the configured input directory.
-3. **Run the pipeline sequentially:**
-   ```bash
-   python 01-LIBIDS.py
-   python 02-LIPANCORA.py
-   python 03-LIRACOS.py
-   ```
+The PBL height is estimated from the vertical gradient of a smoothed Range Corrected Signal profile. The method searches for the strongest physically meaningful negative gradient within a configured altitude interval.
+
+Typical configuration keys:
+
+```yaml
+physics:
+  pbl_min_search_m: 500.0
+  pbl_max_search_m: 4000.0
+  pbl_smooth_bins: 15
+```
+
+### Tropopause
+
+When radiosonde data are available, MILGRAU estimates:
+
+- **Cold Point Tropopause**;
+- **Lapse Rate Tropopause**, following a WMO-style lapse-rate criterion.
+
+These diagnostics are stored as global Level 1 attributes and can be overlaid on visual products.
+
+---
+
+## Molecular atmosphere and Rayleigh calculations
+
+The Level 2 development path depends on a molecular reference profile.
+
+MILGRAU includes routines to compute molecular backscatter and extinction from pressure and temperature profiles:
+
+```text
+β_mol(z, λ)
+α_mol(z, λ)
+```
+
+where pressure and temperature may come from radiosonde data or a fallback standard atmosphere.
+
+For Rayleigh scattering, the molecular lidar ratio is treated as:
+
+```text
+S_mol = 8π / 3 sr
+```
+
+The molecular profile is required for Rayleigh calibration and for the Klett-Fernald-Sasano inversion.
+
+---
+
+## Signal gluing
+
+LEBEAR will use Analog and Photon Counting channels together when both are available for the same wavelength.
+
+The gluing procedure is designed to search for a stable overlap region where the two signals are physically compatible. The selection criteria include:
+
+- high Pearson correlation;
+- stable linear mapping between Analog and Photon Counting signals;
+- acceptable relative intercept;
+- low residual spread;
+- compatible min/max envelope after scaling.
+
+The glued signal is intended to preserve near-field analog dynamic range while retaining photon-counting sensitivity at higher altitudes.
+
+---
+
+## Klett-Fernald-Sasano inversion
+
+The planned Level 2 retrieval uses a Klett-Fernald-Sasano-type inversion to estimate aerosol optical properties from calibrated elastic lidar signals.
+
+The expected Level 2 products include:
+
+```text
+aerosol_backscatter(time, wavelength, altitude)
+aerosol_backscatter_error(time, wavelength, altitude)
+
+aerosol_extinction(time, wavelength, altitude)
+aerosol_extinction_error(time, wavelength, altitude)
+```
+
+The inversion will use:
+
+- molecular backscatter and extinction;
+- calibrated Range Corrected Signal;
+- configured aerosol lidar ratios;
+- molecular reference altitude selection;
+- Monte Carlo perturbations for uncertainty estimation.
+
+---
+
+## Configuration
+
+MILGRAU is configured through `config.yaml`.
+
+The configuration file contains:
+
+- directory paths;
+- station metadata;
+- instrument constants;
+- channel-specific dead-time corrections;
+- bin-shift values;
+- background offsets;
+- PBL search limits;
+- radiosonde settings;
+- visualization settings;
+- Level 2 inversion parameters;
+- monthly aerosol lidar ratios;
+- cloud-screening parameters.
+
+Physical constants, correction thresholds and processing options should be configured externally and not hardcoded in processing scripts.
+
+Example channel configuration:
+
+```yaml
+physics:
+  channels:
+    "532.PC": [0.0035, -3, 0.0015]
+    "532.AN": [0.0000,  6, 0.0000]
+```
+
+where the values are:
+
+```text
+[deadtime_us, bin_shift, background_offset]
+```
+
+---
+
+## Basic installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/spulidar/milgrau.git
+cd milgrau
+```
+
+Create and activate a virtual environment:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+For editable development:
+
+```bash
+pip install -e .
+```
+
+---
+
+## Basic usage
+
+Run the processing stages with:
+
+```bash
+python scripts/run_libids.py
+python scripts/run_lipancora.py
+python scripts/run_liracos.py
+python scripts/run_lebear.py
+```
+
+Or, after editable installation:
+
+```bash
+milgrau-libids
+milgrau-lipancora
+milgrau-liracos
+milgrau-lebear
+```
+
+At the current development stage, `milgrau-lebear` validates the Level 1 input contract but does not yet produce the final Level 2 optical-property product.
 
 ---
 
 ## Authors
 
-* **Luisa Mello**
-* **Alexandre C. Yoshida**
-* **Alexandre Cacheffo**
-* **Fábio J. S. Lopes**
-
+- Luisa Mello
+- Alexandre C. Yoshida
+- Alexandre Cacheffo
+- Fábio J. S. Lopes
