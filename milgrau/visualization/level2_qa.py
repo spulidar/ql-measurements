@@ -5,12 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xarray as xr
 
-from milgrau.visualization.quicklooks import extract_datetime_strings, rolling_altitude, safe_error_of_mean, safe_time_mean
+from milgrau.visualization.quicklooks import (
+    extract_datetime_strings,
+    rolling_altitude,
+    safe_error_of_mean,
+    safe_time_mean,
+)
 from milgrau.visualization.style import add_footer_and_logos, channel_color, get_output_settings
 
 
@@ -49,10 +56,17 @@ def add_atmospheric_boundaries(ax: Any, ds: xr.Dataset, max_alt_km: float) -> bo
         try:
             pbl_km = float(ds["PBL_Height_km"].mean(skipna=True).values)
             if np.isfinite(pbl_km) and 0 < pbl_km <= max_alt_km:
-                ax.axhline(pbl_km, color="crimson", linestyle="--", linewidth=1.4, label=f"Mean PBL ({pbl_km:.1f} km)")
+                ax.axhline(
+                    pbl_km,
+                    color="crimson",
+                    linestyle="--",
+                    linewidth=1.4,
+                    label=f"Mean PBL ({pbl_km:.1f} km)",
+                )
                 has_legend = True
         except Exception:
             pass
+
     for attr_name, label, color, linestyle in (
         ("tropopause_cpt_km", "CPT", "royalblue", ":"),
         ("tropopause_lrt_km", "LRT", "forestgreen", "-."),
@@ -67,6 +81,106 @@ def add_atmospheric_boundaries(ax: Any, ds: xr.Dataset, max_alt_km: float) -> bo
     return has_legend
 
 
+def infer_l1_channels_for_wavelength(ds_l1: xr.Dataset | None, wavelength_nm: int | float) -> tuple[str | None, str | None]:
+    """Infer Analog and Photon Counting channel names for a wavelength."""
+    if ds_l1 is None or "channel" not in ds_l1.coords:
+        return None, None
+    wavelength = str(int(wavelength_nm))
+    channels = [str(channel) for channel in ds_l1["channel"].values]
+    analog = next((ch for ch in channels if ch.startswith(f"{wavelength}.") and ch.upper().endswith(".AN")), None)
+    photon = next((ch for ch in channels if ch.startswith(f"{wavelength}.") and (ch.upper().endswith(".PC") or ch.upper().endswith(".PH"))), None)
+    return analog, photon
+
+
+def plot_qa_gluing(
+    ds_l1: xr.Dataset | None,
+    ds_l2: xr.Dataset,
+    wavelength_nm: int | float,
+    output_folder: str | Path,
+    file_name_prefix: str,
+    config: dict[str, Any],
+    root_dir: str | Path,
+) -> Path | None:
+    """Plot QA diagnostics for Analog/Photon Counting signal gluing."""
+    wavelength = int(wavelength_nm)
+    required = {
+        "glued_range_corrected_signal",
+        "gluing_success_flag",
+        "gluing_split_altitude_m",
+    }
+    if not required.issubset(set(ds_l2.data_vars)):
+        return None
+
+    output_format, dpi = get_output_settings(config)
+    date_title, _ = extract_datetime_strings(ds_l2)
+    alt_km = altitude_to_km(ds_l2["altitude"].values)
+    max_alt_km = min(15.0, float(np.nanmax(alt_km)))
+    valid_alt = alt_km <= max_alt_km
+    color = channel_color(wavelength)
+
+    glued = ds_l2["glued_range_corrected_signal"].sel(wavelength=wavelength)
+    glued_profile = rolling_altitude(safe_time_mean(glued), bins=20)
+    split_alt_km = ds_l2["gluing_split_altitude_m"].sel(wavelength=wavelength) / 1000.0
+    success = ds_l2["gluing_success_flag"].sel(wavelength=wavelength)
+
+    fig = plt.figure(figsize=(13.5, 8.0))
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1.2, 1.0], wspace=0.25)
+    ax0 = plt.subplot(gs[0])
+    ax1 = plt.subplot(gs[1])
+
+    if ds_l1 is not None:
+        analog_ch, photon_ch = infer_l1_channels_for_wavelength(ds_l1, wavelength)
+        if analog_ch is not None and photon_ch is not None and "range_corrected_signal" in ds_l1:
+            analog_profile = rolling_altitude(safe_time_mean(ds_l1["range_corrected_signal"].sel(channel=analog_ch)), bins=20)
+            photon_profile = rolling_altitude(safe_time_mean(ds_l1["range_corrected_signal"].sel(channel=photon_ch)), bins=20)
+            ax0.plot(analog_profile.values[valid_alt], alt_km[valid_alt], linestyle="--", linewidth=1.6, label=f"{analog_ch} mean RCS")
+            ax0.plot(photon_profile.values[valid_alt], alt_km[valid_alt], linestyle=":", linewidth=1.8, label=f"{photon_ch} mean RCS")
+
+    ax0.plot(glued_profile.values[valid_alt], alt_km[valid_alt], color=color, linewidth=2.4, label="Glued mean RCS")
+    median_split = float(np.nanmedian(split_alt_km.values)) if np.any(np.isfinite(split_alt_km.values)) else np.nan
+    if np.isfinite(median_split) and 0 < median_split <= max_alt_km:
+        ax0.axhline(median_split, color="black", linestyle="-.", linewidth=1.6, label=f"Median split {median_split:.2f} km")
+
+    ax0.set_title(f"QA Gluing Profile - {format_wavelength_label(wavelength)}", fontsize=14, fontweight="bold")
+    ax0.set_xlabel("RCS [a.u.]", fontsize=12, fontweight="bold")
+    ax0.set_ylabel("Altitude (km a.g.l.)", fontsize=12, fontweight="bold")
+    ax0.set_ylim(0, max_alt_km)
+    ax0.set_xscale("symlog", linthresh=1e-3)
+    ax0.grid(True, which="both", alpha=0.45)
+    ax0.legend(fontsize=9, loc="best")
+
+    try:
+        time_values = pd.to_datetime(ds_l2["time"].values)
+        ax1.plot(time_values, split_alt_km.values, marker="o", linestyle="-", linewidth=1.4, markersize=3)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        ax1.set_xlabel("Time (UTC)", fontsize=12, fontweight="bold")
+    except Exception:
+        ax1.plot(np.arange(split_alt_km.size), split_alt_km.values, marker="o", linestyle="-", linewidth=1.4, markersize=3)
+        ax1.set_xlabel("Profile index", fontsize=12, fontweight="bold")
+
+    success_rate = 100.0 * float(np.nansum(success.values)) / max(success.size, 1)
+    ax1.set_title(f"Split Altitude Time Series\nSuccess rate: {success_rate:.1f}%", fontsize=14, fontweight="bold")
+    ax1.set_ylabel("Split altitude (km a.g.l.)", fontsize=12, fontweight="bold")
+    ax1.set_ylim(0, max_alt_km)
+    ax1.grid(True, alpha=0.45)
+    if np.isfinite(median_split) and 0 < median_split <= max_alt_km:
+        ax1.axhline(median_split, color="black", linestyle="-.", linewidth=1.6)
+
+    fig.suptitle(
+        f"MILGRAU Level 2 QA - Signal Gluing - {format_wavelength_label(wavelength)}\n{date_title}",
+        fontsize=15,
+        fontweight="bold",
+        y=0.97,
+    )
+    fig.subplots_adjust(top=0.84, bottom=0.14)
+    add_footer_and_logos(fig, root_dir)
+    out_path = Path(output_folder) / f"QA_Gluing_{file_name_prefix}_{wavelength}nm.{output_format}"
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
 def plot_qa_molecular_fit(
     ds_l2: xr.Dataset,
     wavelength_nm: int | float,
@@ -78,7 +192,7 @@ def plot_qa_molecular_fit(
     """Plot QA for Rayleigh molecular calibration."""
     wavelength = int(wavelength_nm)
     required = {
-        "glued_corrected_signal",
+        "glued_range_corrected_signal_mean",
         "molecular_backscatter",
         "rayleigh_calibration_factor",
         "rayleigh_reference_altitude_m",
@@ -91,7 +205,7 @@ def plot_qa_molecular_fit(
     alt_km = altitude_to_km(ds_l2["altitude"].values)
     max_alt_km = min(15.0, float(np.nanmax(alt_km)))
     valid_alt = alt_km <= max_alt_km
-    mean_glued = rolling_altitude(safe_time_mean(ds_l2["glued_corrected_signal"].sel(wavelength=wavelength)), bins=20)
+    mean_glued = rolling_altitude(ds_l2["glued_range_corrected_signal_mean"].sel(wavelength=wavelength), bins=20)
     beta_mol = ds_l2["molecular_backscatter"].sel(wavelength=wavelength)
     calibration_factor = float(ds_l2["rayleigh_calibration_factor"].sel(wavelength=wavelength).values)
     rayleigh_rcs = rolling_altitude(beta_mol * calibration_factor, bins=20)
@@ -204,6 +318,9 @@ def plot_all_level2_qa(
     """Generate available Level 2 QA plots for each wavelength."""
     generated: list[Path] = []
     for wavelength_nm in get_wavelength_values(ds_l2):
+        gluing_path = plot_qa_gluing(ds_l1, ds_l2, wavelength_nm, output_folder, file_name_prefix, config, root_dir)
+        if gluing_path is not None:
+            generated.append(gluing_path)
         molecular_path = plot_qa_molecular_fit(ds_l2, wavelength_nm, output_folder, file_name_prefix, config, root_dir)
         if molecular_path is not None:
             generated.append(molecular_path)
