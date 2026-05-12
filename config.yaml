@@ -166,13 +166,13 @@ inversion:
     min_valid_fraction: 0.50
   gluing:
     enabled: true
-    window_length_bins: 150
-    correlation_threshold: 0.95
-    intercept_threshold: 0.5
-    gaussian_threshold: 0.1
-    minmax_threshold: 0.5
-    search_min_idx: 400
-    search_max_idx: 1000
+    window_length_bins: 120
+    correlation_threshold: 0.90
+    intercept_threshold: 5.0
+    gaussian_threshold: 2.0
+    minmax_threshold: 2.0
+    search_min_idx: 80      # 80 * 7.5 m = 0.6 km
+    search_max_idx: 500     # 500 * 7.5 m = 3.75 km
     fallback_to_photon_counting: true
   cloud_screening:
     enabled: true
