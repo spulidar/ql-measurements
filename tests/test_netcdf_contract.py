@@ -1,4 +1,4 @@
-"""Synthetic NetCDF contract tests for Level 1 and LEBEAR scaffold inputs."""
+"""Synthetic NetCDF contract tests for Level 1 and LEBEAR inputs."""
 
 from __future__ import annotations
 
@@ -88,13 +88,31 @@ def test_synthetic_level1_contract(tmp_path: Path) -> None:
         assert float(ds["altitude"].max()) > 100.0
 
 
-def test_lebear_scaffold_accepts_synthetic_level1(tmp_path: Path) -> None:
-    """The current LEBEAR scaffold should validate a minimal Level 1 file."""
+def test_lebear_generates_synthetic_level2_product(tmp_path: Path) -> None:
+    """LEBEAR v0 should produce a small Level 2 product from a synthetic Level 1 file."""
     path = _write_synthetic_level1(tmp_path / "synthetic_level1_rcs.nc")
     logger = _ListLogger()
-    config = {"directories": {"processed_data": str(tmp_path)}}
+    config = {
+        "directories": {"processed_data": str(tmp_path)},
+        "site": {"station_altitude_m": 760.0},
+        "inversion": {
+            "wavelengths_to_process": [532],
+            "monte_carlo_iterations": 10,
+            "random_seed": 123,
+            "molecular_fit": {"ref_alt_min_m": 500.0, "ref_alt_max_m": 1400.0, "ref_window_bins": 20},
+            "gluing": {"window_length_bins": 80, "correlation_threshold": 0.95, "search_min_idx": 20, "search_max_idx": 120},
+        },
+        "visualization": {"level2_qa": {"enabled": False}},
+    }
 
     result = process_single_level1_file(path, config, logger)  # type: ignore[arg-type]
+    output_path = tmp_path / "synthetic_level2_optical.nc"
 
-    assert result.startswith("[PENDING]")
-    assert any("validated" in message.lower() for message in logger.messages)
+    assert result.startswith("[OK]")
+    assert output_path.exists()
+    with xr.open_dataset(output_path) as ds_l2:
+        assert "molecular_backscatter" in ds_l2
+        assert "glued_range_corrected_signal" in ds_l2
+        assert "aerosol_backscatter" in ds_l2
+        assert "gluing_success_flag" in ds_l2
+        assert int(ds_l2["wavelength"].values[0]) == 532
