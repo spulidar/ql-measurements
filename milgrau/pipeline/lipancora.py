@@ -86,7 +86,13 @@ def apply_all_physical_corrections(
     config: Mapping[str, Any],
     logger: logging.Logger,
 ) -> xr.Dataset:
-    """Apply Level 1 instrumental corrections to all available channels."""
+    """Apply Level 1 instrumental corrections to all available channels.
+
+    The Level 1 product stores both the instrumentally corrected signal and the
+    Range Corrected Signal. The latter is explicitly named
+    ``range_corrected_signal`` to avoid ambiguity before LEBEAR optical
+    inversion.
+    """
     channels_config = config.get("physics", {}).get("channels", {})
     c_speed = float(config.get("physics", {}).get("speed_of_light", 299792458.0))
     if len(z_arr) < 2:
@@ -101,7 +107,7 @@ def apply_all_physical_corrections(
         raise ValueError(f"Invalid Accumulated_Shots attribute: {shots}")
 
     z_da = xr.DataArray(z_arr, dims=["range"], attrs={"units": "m"})
-    rcs_datasets = []
+    channel_datasets = []
     status_records = []
     logger.info("  -> Running instrumental corrections channel-by-channel...")
 
@@ -129,7 +135,7 @@ def apply_all_physical_corrections(
                     )
                     dark_current_used = True
 
-            _, _, rcs_c, err_rcs_c = apply_instrumental_corrections(
+            corrected, corrected_error, rcs, rcs_error = apply_instrumental_corrections(
                 sig=sig.rename({"altitude": "range"}),
                 z_da=z_da,
                 shots=shots,
@@ -145,30 +151,42 @@ def apply_all_physical_corrections(
 
             ch_ds = xr.Dataset(
                 {
-                    "corrected_signal": rcs_c.rename({"range": "altitude"}).assign_coords(channel=ch_name).astype(np.float32),
-                    "corrected_signal_error": err_rcs_c.rename({"range": "altitude"}).assign_coords(channel=ch_name).astype(np.float32),
+                    "corrected_signal": corrected.rename({"range": "altitude"}).assign_coords(channel=ch_name).astype(np.float32),
+                    "corrected_signal_error": corrected_error.rename({"range": "altitude"}).assign_coords(channel=ch_name).astype(np.float32),
+                    "range_corrected_signal": rcs.rename({"range": "altitude"}).assign_coords(channel=ch_name).astype(np.float32),
+                    "range_corrected_signal_error": rcs_error.rename({"range": "altitude"}).assign_coords(channel=ch_name).astype(np.float32),
                 }
             )
-            rcs_datasets.append(ch_ds)
+            channel_datasets.append(ch_ds)
             status_records.append((ch_name, 1, int(dark_current_used)))
             logger.info(f"  -> Channel {ch_name}: corrected successfully.")
         except Exception as exc:
             status_records.append((ch_name, 0, int(dark_current_used)))
             logger.warning(f"  -> Channel {ch_name} failed during correction: {exc}")
 
-    if not rcs_datasets:
+    if not channel_datasets:
         raise RuntimeError("All channels failed during instrumental correction.")
 
-    final_ds = xr.concat(rcs_datasets, dim="channel")
+    final_ds = xr.concat(channel_datasets, dim="channel")
     final_ds["corrected_signal"].attrs.update(
         {
-            "long_name": "Range corrected lidar signal",
+            "long_name": "Instrumentally corrected lidar signal",
+            "description": "Signal after dark-current, dead-time, bin-shift and background corrections before range correction",
+            "units": "channel native corrected units",
+        }
+    )
+    final_ds["corrected_signal_error"].attrs.update(
+        {"long_name": "One-sigma uncertainty of instrumentally corrected lidar signal", "units": "channel native corrected units"}
+    )
+    final_ds["range_corrected_signal"].attrs.update(
+        {
+            "long_name": "Range Corrected Signal",
             "description": "Instrumentally corrected signal multiplied by range squared",
             "units": "a.u. m^2",
         }
     )
-    final_ds["corrected_signal_error"].attrs.update(
-        {"long_name": "One-sigma uncertainty of range corrected lidar signal", "units": "a.u. m^2"}
+    final_ds["range_corrected_signal_error"].attrs.update(
+        {"long_name": "One-sigma uncertainty of Range Corrected Signal", "units": "a.u. m^2"}
     )
 
     status_map = {name: (ok, dc) for name, ok, dc in status_records}
@@ -200,7 +218,7 @@ def estimate_pbl_timeseries(
         min_search_m = float(physics_cfg.get("pbl_min_search_m", 500.0))
         max_search_m = float(physics_cfg.get("pbl_max_search_m", 4000.0))
         smooth_bins = int(physics_cfg.get("pbl_smooth_bins", 15))
-        rcs_matrix = final_ds["corrected_signal"].sel(channel=pbl_channel).values
+        rcs_matrix = final_ds["range_corrected_signal"].sel(channel=pbl_channel).values
         logger.info(f"  -> Tracking PBL using {pbl_channel} ({min_search_m:.0f}-{max_search_m:.0f} m).")
         pbl_h = [
             calculate_pbl_height_gradient(
@@ -281,7 +299,7 @@ def process_single_file(args: tuple[str | Path, Mapping[str, Any], logging.Logge
         final_ds.attrs.update(ds_raw.attrs)
         final_ds.attrs.update(
             {
-                "Processing_level": "Level 1: PC->MHz, DeadTime, Dark Current, Bin Shift, Background subtraction, RCS, uncertainty propagation, PBL, Radiosonde, Tropopause",
+                "Processing_level": "Level 1: PC->MHz, DeadTime, Dark Current, Bin Shift, Background subtraction, corrected signal, Range Corrected Signal, uncertainty propagation, PBL, Radiosonde, Tropopause",
                 "Pipeline": "MILGRAU/LIPANCORA",
                 "Input_Level0_File": str(nc_file.name),
                 "Altitude_units": "m",
