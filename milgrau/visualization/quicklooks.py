@@ -14,6 +14,9 @@ import xarray as xr
 
 from milgrau.visualization.style import add_footer_and_logos, channel_color, get_output_settings
 
+RCS_VARIABLE = "range_corrected_signal"
+RCS_ERROR_VARIABLE = "range_corrected_signal_error"
+
 
 def extract_datetime_strings(ds: xr.Dataset) -> tuple[str, str]:
     """Extract human-readable date strings from an xarray Dataset."""
@@ -190,6 +193,9 @@ def plot_global_mean_rcs(
     max_altitude = float(max(config.get("visualization", {}).get("altitude_ranges_km", [5, 15, 30])))
     date_title, _ = extract_datetime_strings(ds)
 
+    if RCS_VARIABLE not in ds or RCS_ERROR_VARIABLE not in ds:
+        raise KeyError(f"Dataset must contain {RCS_VARIABLE} and {RCS_ERROR_VARIABLE}.")
+
     fig, ax = plt.subplots(figsize=(8, 9.6))
     fig.subplots_adjust(top=0.90, bottom=0.15)
     plotted = False
@@ -204,8 +210,8 @@ def plot_global_mean_rcs(
         if channel_name not in available_channels:
             continue
 
-        rc_sig = ds["corrected_signal"].sel(channel=channel_name).where(ds["altitude"] <= max_altitude, drop=True)
-        rc_err = ds["corrected_signal_error"].sel(channel=channel_name).where(ds["altitude"] <= max_altitude, drop=True)
+        rc_sig = ds[RCS_VARIABLE].sel(channel=channel_name).where(ds["altitude"] <= max_altitude, drop=True)
+        rc_err = ds[RCS_ERROR_VARIABLE].sel(channel=channel_name).where(ds["altitude"] <= max_altitude, drop=True)
         if rc_sig.size == 0:
             continue
 
