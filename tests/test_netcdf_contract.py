@@ -28,25 +28,32 @@ class _ListLogger:
 
 
 def _write_synthetic_level1(path: Path) -> Path:
-    """Write a tiny Level 1 RCS NetCDF product for contract testing."""
+    """Write a tiny Level 1 NetCDF product for contract testing."""
     time = pd.date_range("2024-01-01T00:00:00", periods=3, freq="5min")
     altitude = np.arange(0.0, 1500.0, 7.5)
     channel = np.array(["532.AN", "532.PC"], dtype=object)
 
     shape = (time.size, channel.size, altitude.size)
     base_profile = np.exp(-altitude / 1000.0)
-    signal = np.empty(shape, dtype=np.float32)
-    error = np.empty(shape, dtype=np.float32)
+    corrected_signal = np.empty(shape, dtype=np.float32)
+    corrected_signal_error = np.empty(shape, dtype=np.float32)
+    range_corrected_signal = np.empty(shape, dtype=np.float32)
+    range_corrected_signal_error = np.empty(shape, dtype=np.float32)
+
     for t_idx in range(time.size):
         for c_idx in range(channel.size):
             scale = 1.0 + 0.1 * t_idx + 0.05 * c_idx
-            signal[t_idx, c_idx, :] = scale * base_profile * altitude**2
-            error[t_idx, c_idx, :] = 0.05 * np.abs(signal[t_idx, c_idx, :])
+            corrected_signal[t_idx, c_idx, :] = scale * base_profile
+            corrected_signal_error[t_idx, c_idx, :] = 0.05 * np.abs(corrected_signal[t_idx, c_idx, :])
+            range_corrected_signal[t_idx, c_idx, :] = corrected_signal[t_idx, c_idx, :] * altitude**2
+            range_corrected_signal_error[t_idx, c_idx, :] = corrected_signal_error[t_idx, c_idx, :] * altitude**2
 
     ds = xr.Dataset(
         data_vars={
-            "corrected_signal": (("time", "channel", "altitude"), signal),
-            "corrected_signal_error": (("time", "channel", "altitude"), error),
+            "corrected_signal": (("time", "channel", "altitude"), corrected_signal),
+            "corrected_signal_error": (("time", "channel", "altitude"), corrected_signal_error),
+            "range_corrected_signal": (("time", "channel", "altitude"), range_corrected_signal),
+            "range_corrected_signal_error": (("time", "channel", "altitude"), range_corrected_signal_error),
             "PBL_Height_km": (("time",), np.array([0.8, 0.9, 1.0], dtype=np.float32)),
         },
         coords={"time": time, "channel": channel, "altitude": altitude},
@@ -57,8 +64,10 @@ def _write_synthetic_level1(path: Path) -> Path:
             "tropopause_lrt_km": -999.0,
         },
     )
-    ds["corrected_signal"].attrs["units"] = "a.u. m^2"
-    ds["corrected_signal_error"].attrs["units"] = "a.u. m^2"
+    ds["corrected_signal"].attrs["units"] = "channel native corrected units"
+    ds["corrected_signal_error"].attrs["units"] = "channel native corrected units"
+    ds["range_corrected_signal"].attrs["units"] = "a.u. m^2"
+    ds["range_corrected_signal_error"].attrs["units"] = "a.u. m^2"
     ds["altitude"].attrs["units"] = "m"
     ds.to_netcdf(path)
     return path
@@ -71,9 +80,11 @@ def test_synthetic_level1_contract(tmp_path: Path) -> None:
     with xr.open_dataset(path) as ds:
         assert "corrected_signal" in ds
         assert "corrected_signal_error" in ds
+        assert "range_corrected_signal" in ds
+        assert "range_corrected_signal_error" in ds
         assert "altitude" in ds.coords
-        assert ds["corrected_signal"].dims == ("time", "channel", "altitude")
-        assert ds["corrected_signal_error"].shape == ds["corrected_signal"].shape
+        assert ds["range_corrected_signal"].dims == ("time", "channel", "altitude")
+        assert ds["range_corrected_signal_error"].shape == ds["range_corrected_signal"].shape
         assert float(ds["altitude"].max()) > 100.0
 
 
