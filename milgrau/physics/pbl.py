@@ -12,7 +12,12 @@ def calculate_pbl_height_gradient(
     max_search_m: float = 4000.0,
     smooth_bins: int = 15,
 ) -> float:
-    """Estimate PBL height with the strongest negative RCS gradient method."""
+    """Estimate PBL height with the strongest negative RCS gradient method.
+
+    The smoothing step uses edge padding before convolution. This avoids false
+    negative gradients at the search-window boundaries, which can otherwise
+    appear when ``np.convolve(..., mode="same")`` implicitly pads with zeros.
+    """
     rcs_signal = np.asarray(rcs_signal, dtype=np.float64)
     alt_m = np.asarray(alt_m, dtype=np.float64)
 
@@ -40,11 +45,13 @@ def calculate_pbl_height_gradient(
 
     median_val = np.nanmedian(search_rcs[finite])
     search_rcs = np.where(np.isfinite(search_rcs), search_rcs, median_val)
-    window = np.ones(smooth_bins, dtype=np.float64) / smooth_bins
-    smoothed_rcs = np.convolve(search_rcs, window, mode="same")
-    gradient = np.gradient(smoothed_rcs, search_alt)
 
     edge_trim = smooth_bins // 2
+    window = np.ones(smooth_bins, dtype=np.float64) / smooth_bins
+    padded_rcs = np.pad(search_rcs, pad_width=edge_trim, mode="edge")
+    smoothed_rcs = np.convolve(padded_rcs, window, mode="valid")
+    gradient = np.gradient(smoothed_rcs, search_alt)
+
     if len(gradient) > 2 * edge_trim:
         min_grad_idx = int(np.argmin(gradient[edge_trim:-edge_trim])) + edge_trim
     else:
