@@ -14,6 +14,9 @@ from matplotlib import pyplot as plt
 from milgrau.io.filesystem import ensure_directories
 from milgrau.visualization.quicklooks import plot_global_mean_rcs, plot_quicklook
 
+RCS_VARIABLE = "range_corrected_signal"
+RCS_ERROR_VARIABLE = "range_corrected_signal_error"
+
 
 def _as_bool(value: Any, default: bool = False) -> bool:
     """Convert configuration values to bool safely."""
@@ -73,6 +76,13 @@ def _extract_level1_boundaries(ds: xr.Dataset) -> tuple[xr.DataArray | None, flo
     return pbl_da, cpt_km, lrt_km
 
 
+def _validate_l1_visualization_contract(ds: xr.Dataset) -> None:
+    """Validate the Level 1 variables required by LIRACOS."""
+    missing = [name for name in (RCS_VARIABLE, RCS_ERROR_VARIABLE) if name not in ds]
+    if missing:
+        raise KeyError(f"Level 1 file is missing required RCS variable(s): {missing}")
+
+
 def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, logging.Logger]) -> str:
     """Render all Level 1 quicklooks for one NetCDF file."""
     nc_file_path, config, root_dir, logger = args
@@ -91,6 +101,7 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
         logger.info(f"[{file_name_prefix}] Loading Level 1 data and preparing axes...")
         with xr.open_dataset(nc_file) as ds:
             ds.load()
+            _validate_l1_visualization_contract(ds)
             ds = _prepare_level1_for_visualization(ds)
             pbl_da, cpt_km, lrt_km = _extract_level1_boundaries(ds)
             channels_to_plot = _get_visualization_channels(config)
@@ -102,8 +113,8 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
                 if channel_name not in available_channels:
                     logger.warning(f"[{file_name_prefix}] Channel not found, skipping: {channel_name}")
                     continue
-                rc_signal = ds["corrected_signal"].sel(channel=channel_name)
-                rc_error = ds["corrected_signal_error"].sel(channel=channel_name)
+                rc_signal = ds[RCS_VARIABLE].sel(channel=channel_name)
+                rc_error = ds[RCS_ERROR_VARIABLE].sel(channel=channel_name)
                 for max_altitude in altitude_ranges:
                     sig_slice = rc_signal.sel(altitude=slice(0, max_altitude))
                     err_slice = rc_error.sel(altitude=slice(0, max_altitude))
