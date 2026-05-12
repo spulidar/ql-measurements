@@ -8,6 +8,11 @@ import numpy as np
 
 from milgrau.physics.constants import BOLTZMANN_CONSTANT_J_K, RAYLEIGH_LIDAR_RATIO_SR
 
+# Practical Rayleigh scattering cross-section near 550 nm in m².
+# The previous 5.45e-28 value produced molecular extinction/backscatter roughly
+# three orders of magnitude too high for atmospheric lidar applications.
+RAYLEIGH_CROSS_SECTION_550_M2 = 5.45e-31
+
 
 def calculate_molecular_profile(
     temp_profile: np.ndarray,
@@ -29,7 +34,7 @@ def calculate_molecular_profile(
     press_pa = press_safe * 100.0
     n_density = press_pa / (BOLTZMANN_CONSTANT_J_K * temp_safe)
 
-    sigma = 5.45e-28 * ((550.0 / wavelength_nm) ** 4)
+    sigma = RAYLEIGH_CROSS_SECTION_550_M2 * ((550.0 / wavelength_nm) ** 4)
     alpha_mol = n_density * sigma
     beta_mol = alpha_mol / RAYLEIGH_LIDAR_RATIO_SR
     return beta_mol.astype(np.float64), alpha_mol.astype(np.float64)
