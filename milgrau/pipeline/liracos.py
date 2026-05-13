@@ -12,7 +12,7 @@ import xarray as xr
 from matplotlib import pyplot as plt
 
 from milgrau.io.filesystem import ensure_directories
-from milgrau.visualization.quicklooks import plot_global_mean_rcs, plot_quicklook
+from milgrau.visualization.quicklooks import format_channel_name, plot_global_mean_rcs, plot_quicklook
 
 RCS_VARIABLE = "range_corrected_signal"
 RCS_ERROR_VARIABLE = "range_corrected_signal_error"
@@ -27,6 +27,23 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
     return bool(value)
+
+
+def _get_output_format(config: dict[str, Any]) -> str:
+    """Return configured plot output format."""
+    return str(config.get("visualization", {}).get("output_format", "webp")).lstrip(".").lower()
+
+
+def _quicklook_output_path(output_folder: Path, file_name_prefix: str, channel_name: str, max_altitude: float, config: dict[str, Any]) -> Path:
+    """Return the expected output path for one quicklook plot."""
+    pretty_channel = format_channel_name(channel_name)
+    output_format = _get_output_format(config)
+    return output_folder / f"Quicklook_{file_name_prefix}_{pretty_channel.replace(' ', '_')}_{float(max_altitude):g}km.{output_format}"
+
+
+def _global_mean_output_path(output_folder: Path, file_name_prefix: str, config: dict[str, Any]) -> Path:
+    """Return the expected output path for the global mean RCS plot."""
+    return output_folder / f"GlobalMeanRCS_{file_name_prefix}.{_get_output_format(config)}"
 
 
 def _get_visualization_channels(config: dict[str, Any]) -> list[str]:
@@ -92,11 +109,9 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
         file_name_prefix = nc_file.name.replace("_level1_rcs.nc", "")
         output_folder = nc_file.parent / "quicklooks"
         ensure_directories(output_folder)
-
         incremental = _as_bool(config.get("processing", {}).get("incremental", False))
-        check_file = output_folder / f"GlobalMeanRCS_{file_name_prefix}.webp"
-        if incremental and check_file.exists():
-            return f"[SKIPPED] Plots already exist for: {file_name_prefix}"
+        generated_count = 0
+        skipped_count = 0
 
         logger.info(f"[{file_name_prefix}] Loading Level 1 data and preparing axes...")
         with xr.open_dataset(nc_file) as ds:
@@ -116,6 +131,12 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
                 rc_signal = ds[RCS_VARIABLE].sel(channel=channel_name)
                 rc_error = ds[RCS_ERROR_VARIABLE].sel(channel=channel_name)
                 for max_altitude in altitude_ranges:
+                    expected_path = _quicklook_output_path(output_folder, file_name_prefix, channel_name, max_altitude, config)
+                    if incremental and expected_path.exists():
+                        logger.info(f"[SKIPPED] Quicklook already exists: {expected_path.name}")
+                        skipped_count += 1
+                        continue
+
                     sig_slice = rc_signal.sel(altitude=slice(0, max_altitude))
                     err_slice = rc_error.sel(altitude=slice(0, max_altitude))
                     if sig_slice.size == 0:
@@ -137,16 +158,23 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
                         cpt_km=cpt_km,
                         lrt_km=lrt_km,
                     )
+                    generated_count += 1
                     del sig_slice, err_slice
                     plt.close("all")
                     gc.collect()
 
-            logger.info(f"[{file_name_prefix}] Generating global mean RCS profile...")
-            plot_global_mean_rcs(ds, str(output_folder), file_name_prefix, config, str(root_path))
+            global_mean_path = _global_mean_output_path(output_folder, file_name_prefix, config)
+            if incremental and global_mean_path.exists():
+                logger.info(f"[SKIPPED] Global mean RCS already exists: {global_mean_path.name}")
+                skipped_count += 1
+            else:
+                logger.info(f"[{file_name_prefix}] Generating global mean RCS profile...")
+                plot_global_mean_rcs(ds, str(output_folder), file_name_prefix, config, str(root_path))
+                generated_count += 1
 
         plt.close("all")
         gc.collect()
-        return f"[OK] All plots generated for {file_name_prefix}"
+        return f"[OK] Plots generated for {file_name_prefix}: generated={generated_count}, skipped={skipped_count}"
     except Exception:
         return f"[FAILED] Error plotting {nc_file.name}:\n{traceback.format_exc()}"
 
