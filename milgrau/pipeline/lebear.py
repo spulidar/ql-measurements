@@ -1,11 +1,9 @@
 """LEBEAR Level 2 optical inversion pipeline.
 
 LEBEAR converts Level 1 Range Corrected Signal products into first-pass Level 2
-mean optical products. This initial implementation is intentionally conservative:
-for each configured wavelength it performs profile-by-profile Analog/Photon
-Counting gluing, computes a molecular profile, selects a Rayleigh reference
-region, and runs a mean-profile KFS/Fernald-Sasano inversion with Monte Carlo
-uncertainty.
+optical products. This implementation produces both 15-minute block products
+and a full-period mean product, using Analog/Photon Counting gluing, Rayleigh
+molecular calibration, and KFS/Fernald-Sasano inversion.
 """
 
 from __future__ import annotations
@@ -23,7 +21,12 @@ from milgrau.io.filesystem import ensure_directories
 from milgrau.physics.atmosphere import get_standard_atmosphere
 from milgrau.physics.gluing import slide_glue_signals
 from milgrau.physics.kfs import kfs_inversion_monte_carlo
-from milgrau.physics.molecular import calculate_molecular_profile, find_optimal_reference_altitude
+from milgrau.physics.molecular import (
+    calculate_molecular_profile,
+    calculate_simulated_molecular_signal,
+    find_optimal_reference_altitude,
+    robust_rayleigh_calibration_factor,
+)
 from milgrau.visualization.level2_qa import plot_all_level2_qa
 
 
@@ -99,13 +102,13 @@ def _get_gluing_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """Return gluing configuration with safe defaults."""
     gluing_cfg = config.get("inversion", {}).get("gluing", {}) or {}
     return {
-        "window_size": int(gluing_cfg.get("window_length_bins", 150)),
-        "min_corr": float(gluing_cfg.get("correlation_threshold", 0.95)),
-        "search_min_idx": int(gluing_cfg.get("search_min_idx", 400)),
-        "search_max_idx": int(gluing_cfg.get("search_max_idx", 1000)),
-        "intercept_threshold": float(gluing_cfg.get("intercept_threshold", 0.5)),
-        "gaussian_threshold": float(gluing_cfg.get("gaussian_threshold", 0.1)),
-        "minmax_threshold": float(gluing_cfg.get("minmax_threshold", 0.5)),
+        "window_size": int(gluing_cfg.get("window_length_bins", 120)),
+        "min_corr": float(gluing_cfg.get("correlation_threshold", 0.90)),
+        "search_min_idx": int(gluing_cfg.get("search_min_idx", 80)),
+        "search_max_idx": int(gluing_cfg.get("search_max_idx", 500)),
+        "intercept_threshold": float(gluing_cfg.get("intercept_threshold", 5.0)),
+        "gaussian_threshold": float(gluing_cfg.get("gaussian_threshold", 2.0)),
+        "minmax_threshold": float(gluing_cfg.get("minmax_threshold", 2.0)),
         "fallback_to_photon_counting": bool(gluing_cfg.get("fallback_to_photon_counting", True)),
     }
 
@@ -114,26 +117,33 @@ def _get_molecular_fit_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """Return molecular reference configuration with safe defaults."""
     fit_cfg = config.get("inversion", {}).get("molecular_fit", {}) or {}
     return {
-        "ref_alt_min_m": float(fit_cfg.get("ref_alt_min_m", 5000.0)),
-        "ref_alt_max_m": float(fit_cfg.get("ref_alt_max_m", 9000.0)),
-        "ref_window_bins": int(fit_cfg.get("ref_window_bins", 50)),
+        "ref_alt_min_m": float(fit_cfg.get("ref_alt_min_m", 22000.0)),
+        "ref_alt_max_m": float(fit_cfg.get("ref_alt_max_m", 28000.0)),
+        "ref_window_bins": int(fit_cfg.get("ref_window_bins", 100)),
     }
 
 
-def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, str]:
-    """Build pressure and temperature profiles on the lidar altitude grid.
+def _get_kfs_mode(config: Mapping[str, Any]) -> str:
+    """Return the configured KFS integration mode."""
+    mode = str(config.get("inversion", {}).get("kfs_mode", "two_sided")).strip().lower()
+    if mode not in {"backward", "two_sided"}:
+        return "backward"
+    return mode
 
-    Level 1 altitude is stored as AGL. Radiosonde altitude is usually ASL/MSL, so
-    the lidar grid is shifted by station altitude before interpolation.
-    """
+
+def _get_temporal_average_minutes(config: Mapping[str, Any]) -> int:
+    """Return the temporal averaging window in minutes for block products."""
+    return max(int(config.get("inversion", {}).get("temporal_average_minutes", 15)), 1)
+
+
+def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, str]:
+    """Build pressure and temperature profiles on the lidar altitude grid."""
     site_cfg = config.get("site", {})
     station_altitude_m = float(site_cfg.get("station_altitude_m", config.get("physics", {}).get("station_altitude_m", 0.0)))
     altitude_asl_m = altitude_agl_m + station_altitude_m
 
     standard_pressure, standard_temperature = get_standard_atmosphere(altitude_asl_m)
-    if {"Radiosonde_Temperature_K", "Radiosonde_Pressure_hPa", "radiosonde_altitude"}.issubset(
-        set(ds_l1.variables) | set(ds_l1.coords)
-    ):
+    if {"Radiosonde_Temperature_K", "Radiosonde_Pressure_hPa", "radiosonde_altitude"}.issubset(set(ds_l1.variables) | set(ds_l1.coords)):
         radio_alt = np.asarray(ds_l1["radiosonde_altitude"].values, dtype=np.float64)
         radio_temp = np.asarray(ds_l1["Radiosonde_Temperature_K"].values, dtype=np.float64)
         radio_pressure = np.asarray(ds_l1["Radiosonde_Pressure_hPa"].values, dtype=np.float64)
@@ -184,7 +194,7 @@ def _glue_wavelength_profiles(
         photon_error = error_da.sel(channel=photon_ch).values.astype(np.float64)
 
         for time_idx in range(n_time):
-            result = slide_glue_signals(
+            glued_profile, split_point, slope_i, intercept_i, diagnostics = slide_glue_signals(
                 analog_sig=analog_signal[time_idx, :],
                 pc_sig=photon_signal[time_idx, :],
                 altitude=altitude_m,
@@ -197,7 +207,6 @@ def _glue_wavelength_profiles(
                 minmax_threshold=gluing_cfg["minmax_threshold"],
                 return_diagnostics=True,
             )
-            glued_profile, split_point, slope_i, intercept_i, diagnostics = result
             glued[time_idx, :] = glued_profile
             slope[time_idx] = slope_i
             intercept[time_idx] = intercept_i
@@ -211,11 +220,9 @@ def _glue_wavelength_profiles(
                 glued_error[time_idx, :] = photon_error[time_idx, :]
 
         logger.info(
-            f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% "
-            f"({analog_ch} + {photon_ch})."
+            f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% ({analog_ch} + {photon_ch})."
         )
         source = "analog_photon_glued"
-
     else:
         fallback_ch = photon_ch or analog_ch
         glued[:, :] = signal_da.sel(channel=fallback_ch).values.astype(np.float64)
@@ -244,11 +251,54 @@ def _error_of_mean(error_matrix: np.ndarray) -> np.ndarray:
     return np.sqrt(np.nansum(error_matrix**2, axis=0)) / valid_count
 
 
-def _calibrate_rayleigh(rcs_mean: np.ndarray, beta_mol: np.ndarray, ref_idx: int) -> float:
-    """Estimate the multiplicative factor mapping molecular backscatter to RCS."""
-    if not np.isfinite(rcs_mean[ref_idx]) or not np.isfinite(beta_mol[ref_idx]) or beta_mol[ref_idx] <= 0.0:
-        return np.nan
-    return float(rcs_mean[ref_idx] / beta_mol[ref_idx])
+def _block_groups(time_values: np.ndarray, minutes: int) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Return block labels and index groups for temporal averaging."""
+    times = pd.to_datetime(time_values)
+    labels = times.floor(f"{int(minutes)}min")
+    unique_labels = pd.Index(labels).unique().sort_values()
+    groups = [np.where(labels == label)[0] for label in unique_labels]
+    return unique_labels.to_numpy(dtype="datetime64[ns]"), groups
+
+
+def _mean_by_groups(matrix: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
+    """Calculate NaN-safe means for a time x altitude matrix over index groups."""
+    return np.stack([np.nanmean(matrix[group, :], axis=0) for group in groups], axis=0)
+
+
+def _error_by_groups(error_matrix: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
+    """Calculate uncertainty of grouped means from one-sigma profiles."""
+    return np.stack([_error_of_mean(error_matrix[group, :]) for group in groups], axis=0)
+
+
+def _run_kfs_profile(
+    rcs: np.ndarray,
+    rcs_error: np.ndarray,
+    altitude_m: np.ndarray,
+    beta_mol: np.ndarray,
+    ref_idx: int,
+    lr_base: float,
+    lr_std: float,
+    config: Mapping[str, Any],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Run KFS for one RCS profile using the configured inversion options."""
+    inv_cfg = config.get("inversion", {})
+    return kfs_inversion_monte_carlo(
+        rcs=rcs,
+        altitude=altitude_m,
+        beta_mol=beta_mol,
+        lr_base=lr_base,
+        lr_std=lr_std,
+        ref_idx=ref_idx,
+        n_iterations=int(inv_cfg.get("monte_carlo_iterations", 300)),
+        rcs_error=rcs_error,
+        beta_ref_relative_std=float(inv_cfg.get("beta_ref_relative_std", 0.10)),
+        aerosol_ref_fraction=float(inv_cfg.get("aerosol_ref_fraction", 0.0)),
+        altitude_units="m",
+        min_lidar_ratio=float(inv_cfg.get("min_lidar_ratio_sr", 10.0)),
+        allow_negative_aerosol=bool(inv_cfg.get("allow_negative_aerosol", False)),
+        seed=inv_cfg.get("random_seed"),
+        mode=str(inv_cfg.get("kfs_mode", "two_sided")),
+    )
 
 
 def _process_wavelength(
@@ -258,60 +308,102 @@ def _process_wavelength(
     config: Mapping[str, Any],
     logger: logging.Logger,
 ) -> dict[str, Any]:
-    """Process one wavelength into mean-profile Level 2 arrays and diagnostics."""
+    """Process one wavelength into block and mean Level 2 arrays."""
     gluing = _glue_wavelength_profiles(ds_l1, wavelength_nm, altitude_m, config, logger)
     pressure_hpa, temperature_k, molecular_source = _build_thermodynamic_profile(ds_l1, altitude_m, config)
     beta_mol, alpha_mol = calculate_molecular_profile(temperature_k, pressure_hpa, wavelength_nm)
+    simulated_signal, molecular_transmission = calculate_simulated_molecular_signal(beta_mol, alpha_mol, altitude_m)
+    safe_altitude = np.where(altitude_m > 0.0, altitude_m, altitude_m[altitude_m > 0.0][0])
+    simulated_molecular_rcs = simulated_signal * safe_altitude**2
 
     glued = gluing["glued"]  # type: ignore[assignment]
     glued_error = gluing["glued_error"]  # type: ignore[assignment]
     glued_mean = np.nanmean(glued, axis=0)
     glued_error_mean = _error_of_mean(glued_error)
 
+    block_minutes = _get_temporal_average_minutes(config)
+    block_time, block_groups = _block_groups(ds_l1["time"].values, block_minutes)
+    glued_block = _mean_by_groups(glued, block_groups)
+    glued_error_block = _error_by_groups(glued_error, block_groups)
+
     fit_cfg = _get_molecular_fit_config(config)
     ref_idx = find_optimal_reference_altitude(
         rcs=glued_mean,
-        beta_mol=beta_mol,
+        beta_mol=simulated_molecular_rcs,
         altitude=altitude_m,
         min_alt=fit_cfg["ref_alt_min_m"],
         max_alt=fit_cfg["ref_alt_max_m"],
         window_size=fit_cfg["ref_window_bins"],
         altitude_units="m",
     )
-    calibration_factor = _calibrate_rayleigh(glued_mean, beta_mol, ref_idx)
-    lr_base, lr_std = _get_lidar_ratio(config, wavelength_nm, ds_l1["time"].values[0])
-    inv_cfg = config.get("inversion", {})
-    beta_mean, beta_std, alpha_mean, alpha_std = kfs_inversion_monte_carlo(
-        rcs=glued_mean,
-        altitude=altitude_m,
-        beta_mol=beta_mol,
-        lr_base=lr_base,
-        lr_std=lr_std,
-        ref_idx=ref_idx,
-        n_iterations=int(inv_cfg.get("monte_carlo_iterations", 300)),
-        rcs_error=glued_error_mean,
-        beta_ref_relative_std=float(inv_cfg.get("beta_ref_relative_std", 0.10)),
-        aerosol_ref_fraction=float(inv_cfg.get("aerosol_ref_fraction", 0.0)),
-        altitude_units="m",
-        min_lidar_ratio=float(inv_cfg.get("min_lidar_ratio_sr", 10.0)),
-        allow_negative_aerosol=bool(inv_cfg.get("allow_negative_aerosol", False)),
-        seed=inv_cfg.get("random_seed"),
+    calibration_factor, ref_start_m, ref_stop_m, ref_valid_bins = robust_rayleigh_calibration_factor(
+        measured_signal=glued_mean,
+        simulated_molecular_signal=simulated_molecular_rcs,
+        altitude_m=altitude_m,
+        reference_center_idx=ref_idx,
+        reference_window_bins=fit_cfg["ref_window_bins"],
     )
+
+    lr_base, lr_std = _get_lidar_ratio(config, wavelength_nm, ds_l1["time"].values[0])
+    beta_mean, beta_std, alpha_mean, alpha_std = _run_kfs_profile(
+        glued_mean,
+        glued_error_mean,
+        altitude_m,
+        beta_mol,
+        ref_idx,
+        lr_base,
+        lr_std,
+        config,
+    )
+
+    beta_block = []
+    beta_block_std = []
+    alpha_block = []
+    alpha_block_std = []
+    for block_idx in range(glued_block.shape[0]):
+        b_mean, b_std, a_mean, a_std = _run_kfs_profile(
+            glued_block[block_idx, :],
+            glued_error_block[block_idx, :],
+            altitude_m,
+            beta_mol,
+            ref_idx,
+            lr_base,
+            lr_std,
+            config,
+        )
+        beta_block.append(b_mean)
+        beta_block_std.append(b_std)
+        alpha_block.append(a_mean)
+        alpha_block_std.append(a_std)
 
     return {
         "wavelength": wavelength_nm,
+        "block_time": block_time,
         "molecular_source": molecular_source,
         "molecular_backscatter": beta_mol,
         "molecular_extinction": alpha_mol,
+        "molecular_transmission": molecular_transmission,
+        "simulated_molecular_signal": simulated_signal,
+        "simulated_molecular_range_corrected_signal": simulated_molecular_rcs,
+        "scaled_molecular_range_corrected_signal": simulated_molecular_rcs * calibration_factor,
         "glued_range_corrected_signal": glued,
         "glued_range_corrected_signal_error": glued_error,
+        "glued_range_corrected_signal_block": glued_block,
+        "glued_range_corrected_signal_error_block": glued_error_block,
         "glued_range_corrected_signal_mean": glued_mean,
         "glued_range_corrected_signal_error_mean": glued_error_mean,
         "aerosol_backscatter": beta_mean,
         "aerosol_backscatter_error": beta_std,
         "aerosol_extinction": alpha_mean,
         "aerosol_extinction_error": alpha_std,
+        "aerosol_backscatter_block": np.stack(beta_block, axis=0),
+        "aerosol_backscatter_error_block": np.stack(beta_block_std, axis=0),
+        "aerosol_extinction_block": np.stack(alpha_block, axis=0),
+        "aerosol_extinction_error_block": np.stack(alpha_block_std, axis=0),
         "rayleigh_reference_altitude_m": float(altitude_m[ref_idx]),
+        "rayleigh_reference_start_altitude_m": ref_start_m,
+        "rayleigh_reference_stop_altitude_m": ref_stop_m,
+        "rayleigh_reference_valid_bins": ref_valid_bins,
         "rayleigh_calibration_factor": calibration_factor,
         "lidar_ratio_assumed_sr": lr_base,
         "lidar_ratio_std_sr": lr_std,
@@ -330,12 +422,16 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
     """Build an xarray Level 2 dataset from wavelength processing results."""
     wavelengths = np.asarray([result["wavelength"] for result in results], dtype=np.int32)
     time_values = ds_l1["time"].values
-    coords = {"time": time_values, "wavelength": wavelengths, "altitude": altitude_m}
+    block_time = np.asarray(results[0]["block_time"], dtype="datetime64[ns]")
+    coords = {"time": time_values, "block_time": block_time, "wavelength": wavelengths, "altitude": altitude_m}
 
     def stack(name: str) -> np.ndarray:
         return np.stack([np.asarray(result[name], dtype=np.float64) for result in results], axis=0)
 
     def stack_time(name: str) -> np.ndarray:
+        return np.stack([np.asarray(result[name], dtype=np.float64) for result in results], axis=1)
+
+    def stack_block(name: str) -> np.ndarray:
         return np.stack([np.asarray(result[name], dtype=np.float64) for result in results], axis=1)
 
     def vector(name: str) -> np.ndarray:
@@ -345,15 +441,32 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
         data_vars={
             "molecular_backscatter": (("wavelength", "altitude"), stack("molecular_backscatter")),
             "molecular_extinction": (("wavelength", "altitude"), stack("molecular_extinction")),
+            "molecular_transmission": (("wavelength", "altitude"), stack("molecular_transmission")),
+            "simulated_molecular_signal": (("wavelength", "altitude"), stack("simulated_molecular_signal")),
+            "simulated_molecular_range_corrected_signal": (("wavelength", "altitude"), stack("simulated_molecular_range_corrected_signal")),
+            "scaled_molecular_range_corrected_signal": (("wavelength", "altitude"), stack("scaled_molecular_range_corrected_signal")),
             "glued_range_corrected_signal": (("time", "wavelength", "altitude"), stack_time("glued_range_corrected_signal")),
             "glued_range_corrected_signal_error": (("time", "wavelength", "altitude"), stack_time("glued_range_corrected_signal_error")),
+            "glued_range_corrected_signal_block": (("block_time", "wavelength", "altitude"), stack_block("glued_range_corrected_signal_block")),
+            "glued_range_corrected_signal_error_block": (("block_time", "wavelength", "altitude"), stack_block("glued_range_corrected_signal_error_block")),
             "glued_range_corrected_signal_mean": (("wavelength", "altitude"), stack("glued_range_corrected_signal_mean")),
             "glued_range_corrected_signal_error_mean": (("wavelength", "altitude"), stack("glued_range_corrected_signal_error_mean")),
+            "aerosol_backscatter_mean": (("wavelength", "altitude"), stack("aerosol_backscatter")),
+            "aerosol_backscatter_mean_error": (("wavelength", "altitude"), stack("aerosol_backscatter_error")),
+            "aerosol_extinction_mean": (("wavelength", "altitude"), stack("aerosol_extinction")),
+            "aerosol_extinction_mean_error": (("wavelength", "altitude"), stack("aerosol_extinction_error")),
             "aerosol_backscatter": (("wavelength", "altitude"), stack("aerosol_backscatter")),
             "aerosol_backscatter_error": (("wavelength", "altitude"), stack("aerosol_backscatter_error")),
             "aerosol_extinction": (("wavelength", "altitude"), stack("aerosol_extinction")),
             "aerosol_extinction_error": (("wavelength", "altitude"), stack("aerosol_extinction_error")),
+            "aerosol_backscatter_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_backscatter_block")),
+            "aerosol_backscatter_error_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_backscatter_error_block")),
+            "aerosol_extinction_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_extinction_block")),
+            "aerosol_extinction_error_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_extinction_error_block")),
             "rayleigh_reference_altitude_m": (("wavelength",), vector("rayleigh_reference_altitude_m")),
+            "rayleigh_reference_start_altitude_m": (("wavelength",), vector("rayleigh_reference_start_altitude_m")),
+            "rayleigh_reference_stop_altitude_m": (("wavelength",), vector("rayleigh_reference_stop_altitude_m")),
+            "rayleigh_reference_valid_bins": (("wavelength",), vector("rayleigh_reference_valid_bins")),
             "rayleigh_calibration_factor": (("wavelength",), vector("rayleigh_calibration_factor")),
             "lidar_ratio_assumed_sr": (("wavelength",), vector("lidar_ratio_assumed_sr")),
             "lidar_ratio_std_sr": (("wavelength",), vector("lidar_ratio_std_sr")),
@@ -370,10 +483,11 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
     ds_l2["wavelength"].attrs.update({"units": "nm"})
     ds_l2.attrs.update(
         {
-            "Processing_level": "Level 2: LEBEAR mean-profile optical inversion",
+            "Processing_level": "Level 2: LEBEAR block and mean optical inversion",
             "Pipeline": "MILGRAU/LEBEAR",
             "Input_Level1_File": source_file.name,
-            "LEBEAR_Mode": "mean_profile_backward_kfs",
+            "LEBEAR_Mode": "block_and_mean_kfs",
+            "KFS_Mode": "configured",
             "Molecular_sources": ";".join(str(result["molecular_source"]) for result in results),
             "Gluing_sources": ";".join(str(result["gluing_source"]) for result in results),
             "Analog_channels": ";".join(str(result["analog_channel"]) for result in results),
