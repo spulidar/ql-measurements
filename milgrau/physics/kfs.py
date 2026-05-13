@@ -10,6 +10,132 @@ from numba import njit, prange
 from milgrau.physics.constants import RAYLEIGH_LIDAR_RATIO_SR
 
 
+def _prepare_altitude_m(altitude: np.ndarray, altitude_units: Literal["auto", "m", "km"]) -> np.ndarray:
+    """Return altitude in meters."""
+    altitude_arr = np.ascontiguousarray(altitude, dtype=np.float64)
+    if altitude_units == "auto":
+        return altitude_arr * 1000.0 if np.nanmax(altitude_arr) <= 100.0 else altitude_arr.copy()
+    if altitude_units == "km":
+        return altitude_arr * 1000.0
+    if altitude_units == "m":
+        return altitude_arr.copy()
+    raise ValueError("altitude_units must be 'auto', 'm', or 'km'.")
+
+
+@njit
+def _fernald_single_profile(
+    rcs: np.ndarray,
+    altitude_m: np.ndarray,
+    beta_mol: np.ndarray,
+    lr_aer: float,
+    beta_total_ref: float,
+    ref_idx: int,
+    lr_mol: float,
+    min_lidar_ratio: float,
+    allow_negative_aerosol: bool,
+    mode_code: int,
+) -> np.ndarray:
+    """Single-profile Fernald solution below and optionally above reference."""
+    n_bins = rcs.shape[0]
+    beta_aer = np.empty(n_bins, dtype=np.float64)
+    for j in range(n_bins):
+        beta_aer[j] = np.nan
+
+    if not np.isfinite(lr_aer):
+        return beta_aer
+    if lr_aer < min_lidar_ratio:
+        lr_aer = min_lidar_ratio
+
+    beta_mol_ref = beta_mol[ref_idx]
+    if (not np.isfinite(beta_total_ref)) or beta_total_ref <= 0.0:
+        beta_total_ref = beta_mol_ref
+    if beta_total_ref <= 0.0:
+        return beta_aer
+
+    x_ref = rcs[ref_idx]
+    if (not np.isfinite(x_ref)) or x_ref <= 0.0:
+        return beta_aer
+
+    beta_aer_ref = beta_total_ref - beta_mol_ref
+    if (not allow_negative_aerosol) and beta_aer_ref < 0.0:
+        beta_aer_ref = 0.0
+    beta_aer[ref_idx] = beta_aer_ref
+
+    denom0 = x_ref / beta_total_ref
+
+    # Backward branch: reference -> ground.
+    mol_int = 0.0
+    den_int = 0.0
+    y_prev = x_ref
+    for j in range(ref_idx - 1, -1, -1):
+        dz = altitude_m[j + 1] - altitude_m[j]
+        if (not np.isfinite(dz)) or dz <= 0.0:
+            break
+        x_j = rcs[j]
+        if (not np.isfinite(x_j)) or x_j <= 0.0:
+            x_j = 1e-30
+        bm0 = beta_mol[j]
+        bm1 = beta_mol[j + 1]
+        if (not np.isfinite(bm0)) or (not np.isfinite(bm1)) or bm0 <= 0.0 or bm1 <= 0.0:
+            break
+        mol_int += 0.5 * (bm0 + bm1) * dz
+        exponent = -2.0 * (lr_aer - lr_mol) * mol_int
+        if exponent > 700.0:
+            exponent = 700.0
+        elif exponent < -700.0:
+            exponent = -700.0
+        y_j = x_j * np.exp(exponent)
+        den_int += 0.5 * (y_j + y_prev) * dz
+        denom = denom0 + 2.0 * lr_aer * den_int
+        if (not np.isfinite(denom)) or denom <= 0.0:
+            break
+        beta_total_j = y_j / denom
+        beta_aer_j = beta_total_j - bm0
+        if (not allow_negative_aerosol) and beta_aer_j < 0.0:
+            beta_aer_j = 0.0
+        beta_aer[j] = beta_aer_j
+        y_prev = y_j
+
+    if mode_code == 0:
+        return beta_aer
+
+    # Forward branch: reference -> top. This is useful diagnostically but is
+    # more noise-sensitive than the backward branch.
+    mol_int = 0.0
+    den_int = 0.0
+    y_prev = x_ref
+    for j in range(ref_idx + 1, n_bins):
+        dz = altitude_m[j] - altitude_m[j - 1]
+        if (not np.isfinite(dz)) or dz <= 0.0:
+            break
+        x_j = rcs[j]
+        if (not np.isfinite(x_j)) or x_j <= 0.0:
+            x_j = 1e-30
+        bm0 = beta_mol[j]
+        bm1 = beta_mol[j - 1]
+        if (not np.isfinite(bm0)) or (not np.isfinite(bm1)) or bm0 <= 0.0 or bm1 <= 0.0:
+            break
+        mol_int += 0.5 * (bm0 + bm1) * dz
+        exponent = -2.0 * (lr_aer - lr_mol) * mol_int
+        if exponent > 700.0:
+            exponent = 700.0
+        elif exponent < -700.0:
+            exponent = -700.0
+        y_j = x_j * np.exp(exponent)
+        den_int += 0.5 * (y_j + y_prev) * dz
+        denom = denom0 - 2.0 * lr_aer * den_int
+        if (not np.isfinite(denom)) or denom <= 0.0:
+            break
+        beta_total_j = y_j / denom
+        beta_aer_j = beta_total_j - bm0
+        if (not allow_negative_aerosol) and beta_aer_j < 0.0:
+            beta_aer_j = 0.0
+        beta_aer[j] = beta_aer_j
+        y_prev = y_j
+
+    return beta_aer
+
+
 @njit(parallel=True)
 def _kfs_fernald_mc_core(
     rcs: np.ndarray,
@@ -24,17 +150,23 @@ def _kfs_fernald_mc_core(
     min_lidar_ratio: float,
     use_rcs_noise: bool,
     allow_negative_aerosol: bool,
+    mode_code: int,
 ):
-    """Numba-compiled Monte Carlo Fernald/Klett-Sasano backward inversion."""
+    """Numba-compiled Monte Carlo Fernald/Klett-Sasano inversion."""
     n_iter = lr_samples.shape[0]
     n_bins = rcs.shape[0]
     beta_aer_sims = np.empty((n_iter, n_bins), dtype=np.float64)
     alpha_aer_sims = np.empty((n_iter, n_bins), dtype=np.float64)
 
     for i in prange(n_iter):
+        rcs_i = np.empty(n_bins, dtype=np.float64)
         for j in range(n_bins):
             beta_aer_sims[i, j] = np.nan
             alpha_aer_sims[i, j] = np.nan
+            if use_rcs_noise:
+                rcs_i[j] = rcs[j] + rcs_error[j] * rcs_noise[i, j]
+            else:
+                rcs_i[j] = rcs[j]
 
         lr_aer = lr_samples[i]
         if not np.isfinite(lr_aer):
@@ -42,73 +174,22 @@ def _kfs_fernald_mc_core(
         if lr_aer < min_lidar_ratio:
             lr_aer = min_lidar_ratio
 
-        beta_total_ref = beta_total_ref_samples[i]
-        beta_mol_ref = beta_mol[ref_idx]
-        if (not np.isfinite(beta_total_ref)) or beta_total_ref <= 0.0:
-            beta_total_ref = beta_mol_ref
-        if beta_total_ref <= 0.0:
-            continue
-
-        x_ref = rcs[ref_idx]
-        if use_rcs_noise:
-            x_ref = x_ref + rcs_error[ref_idx] * rcs_noise[i, ref_idx]
-        if (not np.isfinite(x_ref)) or x_ref <= 0.0:
-            continue
-
-        beta_aer_ref = beta_total_ref - beta_mol_ref
-        if (not allow_negative_aerosol) and beta_aer_ref < 0.0:
-            beta_aer_ref = 0.0
-
-        beta_aer_sims[i, ref_idx] = beta_aer_ref
-        alpha_aer_sims[i, ref_idx] = lr_aer * beta_aer_ref
-
-        denom0 = x_ref / beta_total_ref
-        mol_int = 0.0
-        den_int = 0.0
-        y_prev = x_ref
-
-        for j in range(ref_idx - 1, -1, -1):
-            dz = altitude_m[j + 1] - altitude_m[j]
-            if (not np.isfinite(dz)) or dz <= 0.0:
-                break
-
-            x_j = rcs[j]
-            if use_rcs_noise:
-                x_j = x_j + rcs_error[j] * rcs_noise[i, j]
-            if (not np.isfinite(x_j)) or x_j <= 0.0:
-                x_j = 1e-30
-
-            bm0 = beta_mol[j]
-            bm1 = beta_mol[j + 1]
-            if (
-                (not np.isfinite(bm0))
-                or (not np.isfinite(bm1))
-                or bm0 <= 0.0
-                or bm1 <= 0.0
-            ):
-                break
-
-            mol_int += 0.5 * (bm0 + bm1) * dz
-            exponent = -2.0 * (lr_aer - lr_mol) * mol_int
-            if exponent > 700.0:
-                exponent = 700.0
-            elif exponent < -700.0:
-                exponent = -700.0
-
-            y_j = x_j * np.exp(exponent)
-            den_int += 0.5 * (y_j + y_prev) * dz
-            denom = denom0 + 2.0 * lr_aer * den_int
-            if (not np.isfinite(denom)) or denom <= 0.0:
-                break
-
-            beta_total_j = y_j / denom
-            beta_aer_j = beta_total_j - bm0
-            if (not allow_negative_aerosol) and beta_aer_j < 0.0:
-                beta_aer_j = 0.0
-
-            beta_aer_sims[i, j] = beta_aer_j
-            alpha_aer_sims[i, j] = lr_aer * beta_aer_j
-            y_prev = y_j
+        beta_aer = _fernald_single_profile(
+            rcs_i,
+            altitude_m,
+            beta_mol,
+            lr_aer,
+            beta_total_ref_samples[i],
+            ref_idx,
+            lr_mol,
+            min_lidar_ratio,
+            allow_negative_aerosol,
+            mode_code,
+        )
+        for j in range(n_bins):
+            beta_aer_sims[i, j] = beta_aer[j]
+            if np.isfinite(beta_aer[j]):
+                alpha_aer_sims[i, j] = beta_aer[j] * lr_aer
 
     return beta_aer_sims, alpha_aer_sims
 
@@ -129,35 +210,36 @@ def kfs_inversion_monte_carlo(
     allow_negative_aerosol: bool = False,
     seed: int | None = None,
     return_diagnostics: bool = False,
+    mode: Literal["backward", "two_sided"] = "backward",
 ):
-    """Run KFS/Fernald-Sasano inversion with Monte Carlo uncertainty."""
+    """Run KFS/Fernald-Sasano inversion with Monte Carlo uncertainty.
+
+    ``mode='backward'`` retrieves from the reference altitude downward.
+    ``mode='two_sided'`` also performs a forward branch above the reference,
+    reproducing the historical full-column behavior but with more sensitivity to
+    high-altitude noise.
+    """
     rcs_arr = np.ascontiguousarray(rcs, dtype=np.float64)
     beta_mol_arr = np.ascontiguousarray(beta_mol, dtype=np.float64)
-    altitude_arr = np.ascontiguousarray(altitude, dtype=np.float64)
+    altitude_m = np.ascontiguousarray(_prepare_altitude_m(altitude, altitude_units), dtype=np.float64)
 
     if rcs_arr.ndim != 1:
         raise ValueError("kfs_inversion_monte_carlo expects a 1D RCS profile.")
     if beta_mol_arr.shape[0] != rcs_arr.shape[0]:
         raise ValueError("beta_mol must have the same length as rcs.")
-    if altitude_arr.shape[0] != rcs_arr.shape[0]:
+    if altitude_m.shape[0] != rcs_arr.shape[0]:
         raise ValueError("altitude must have the same length as rcs.")
 
-    if altitude_units == "auto":
-        altitude_m = altitude_arr * 1000.0 if np.nanmax(altitude_arr) <= 100.0 else altitude_arr.copy()
-    elif altitude_units == "km":
-        altitude_m = altitude_arr * 1000.0
-    elif altitude_units == "m":
-        altitude_m = altitude_arr.copy()
-    else:
-        raise ValueError("altitude_units must be 'auto', 'm', or 'km'.")
-
-    altitude_m = np.ascontiguousarray(altitude_m, dtype=np.float64)
     n_bins = rcs_arr.shape[0]
     if ref_idx < 0:
         ref_idx = n_bins + int(ref_idx)
     ref_idx = int(ref_idx)
     if ref_idx <= 0 or ref_idx >= n_bins:
         raise ValueError("ref_idx must point to a valid altitude bin above ground.")
+
+    mode_code = 0 if mode == "backward" else 1 if mode == "two_sided" else -1
+    if mode_code < 0:
+        raise ValueError("mode must be 'backward' or 'two_sided'.")
 
     use_rcs_noise = rcs_error is not None
     if use_rcs_noise:
@@ -204,6 +286,7 @@ def kfs_inversion_monte_carlo(
         float(min_lidar_ratio),
         bool(use_rcs_noise),
         bool(allow_negative_aerosol),
+        mode_code,
     )
 
     with np.errstate(all="ignore"):
@@ -221,6 +304,7 @@ def kfs_inversion_monte_carlo(
             "ref_idx": int(ref_idx),
             "altitude_m": altitude_m,
             "used_rcs_noise": bool(use_rcs_noise),
+            "mode": mode,
         }
         return beta_mean, beta_std, alpha_mean, alpha_std, diagnostics
     return beta_mean, beta_std, alpha_mean, alpha_std
