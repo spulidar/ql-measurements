@@ -205,10 +205,6 @@ def plot_quicklook(
     ax0.set_ylim(lower_altitude, max_altitude)
     ax0.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
-    if pbl_da is not None:
-        ax0.plot(pbl_da.time, pbl_da.values, color="crimson", linestyle=":", linewidth=2.5, alpha=1.0, label="PBL Top")
-        ax0.legend(loc="upper right", framealpha=0.7, fontsize=9, facecolor="white", edgecolor="black")
-
     ax1 = plt.subplot(gs[1], sharey=ax0)
     smooth_profile = rolling_altitude(safe_time_mean(data_slice), bins=20)
     smooth_error = rolling_altitude(safe_error_of_mean(error_slice), bins=20)
