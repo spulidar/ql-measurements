@@ -13,21 +13,12 @@ processing:
   interactive_qa: true
   console_level: "INFO"
   file_level: "INFO"
-
-  # Level 0 quality control
   laser_shot_tolerance_fraction: 0.002
   dark_current_max_association_hours: 6.0
-
-  # Raw-file safety policy
   quarantine_spurious_files: true
   delete_spurious_files: false
-  spurious_extensions:
-    - ".dat"
-    - ".dpp"
-    - ".zip"
+  spurious_extensions: [".dat", ".dpp", ".zip"]
   quarantine_dir: "01-data/_quarantine"
-
-  # Backward-compatible worker settings for legacy scripts
   max_workers_io: 1
   max_workers_cpu: 1
 
@@ -49,20 +40,15 @@ physics:
   vertical_resolution_m: 7.5
   speed_of_light_m_s: 299792458.0
   speed_of_light: 299792458.0
-
   default_surface_temp_c: 25.0
   default_surface_pressure_hpa: 940.0
-
   bg_start_m: 29000.0
   bg_stop_m: 29999.0
   bg_start: 29000
   bg_stop: 29999
-
   pbl_min_search_m: 500.0
   pbl_max_search_m: 4000.0
   pbl_smooth_bins: 15
-
-  # Channel constants: [deadtime_us, bin_shift, background_offset]
   channels:
     "355.PC": [0.0020, -2, 0.0005]
     "355.AN": [0.0000,  8, 0.0000]
@@ -133,7 +119,7 @@ visualization:
     mean_profile_smooth_bins: 20
   level2_qa:
     enabled: true
-    max_altitude_km: 15.0
+    max_altitude_km: 30.0
     generate_gluing_qa: true
     generate_molecular_fit_qa: true
     generate_kfs_qa: true
@@ -142,6 +128,8 @@ inversion:
   enabled: true
   interactive_qa: true
   wavelengths_to_process: [355, 532]
+  temporal_average_minutes: 15
+  kfs_mode: "two_sided"   # options: backward, two_sided
   products:
     save_glued_signal: true
     save_molecular_profile: true
@@ -156,9 +144,9 @@ inversion:
   min_lidar_ratio_sr: 10.0
   allow_negative_aerosol: false
   molecular_fit:
-    ref_alt_min_m: 5000.0
-    ref_alt_max_m: 9000.0
-    ref_window_bins: 50
+    ref_alt_min_m: 22000.0
+    ref_alt_max_m: 28000.0
+    ref_window_bins: 100
     lidar_ratio_molecular_sr: 8.377580409572781
     lidar_ratio_molecular: 8.377580409572781
     max_relative_slope: 0.05
@@ -269,12 +257,3 @@ inversion:
       "10": 33.44
       "11": 30.83
       "12": 41.43
-
-website:
-  cloudflare_r2:
-    enabled: true
-    rebuild_html_only: false
-    sync_missing_uploads: false
-  github_pages:
-    enabled: true
-    calendar_file: "ql-measurement-calendar.html"
