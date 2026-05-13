@@ -18,6 +18,18 @@ from milgrau.physics.pbl import calculate_pbl_height_gradient
 from milgrau.physics.tropopause import calculate_tropopause_heights
 
 
+def _incremental_enabled(config: Mapping[str, Any]) -> bool:
+    """Return whether incremental processing is enabled."""
+    return bool(config.get("processing", {}).get("incremental", False))
+
+
+def level1_output_path(nc_file: str | Path, config: Mapping[str, Any]) -> Path:
+    """Return the Level 1 output path for one Level 0 NetCDF file."""
+    nc_path = Path(nc_file)
+    stem = nc_path.stem
+    return Path.cwd() / config["directories"]["processed_data"] / stem[:4] / stem[4:6] / stem / f"{stem}_level1_rcs.nc"
+
+
 def _finite_or_fill(value: Any, fill_value: float = -999.0) -> float:
     """Convert a numeric value to float, replacing invalid values by a fill value."""
     try:
@@ -86,13 +98,7 @@ def apply_all_physical_corrections(
     config: Mapping[str, Any],
     logger: logging.Logger,
 ) -> xr.Dataset:
-    """Apply Level 1 instrumental corrections to all available channels.
-
-    The Level 1 product stores both the instrumentally corrected signal and the
-    Range Corrected Signal. The latter is explicitly named
-    ``range_corrected_signal`` to avoid ambiguity before LEBEAR optical
-    inversion.
-    """
+    """Apply Level 1 instrumental corrections to all available channels."""
     channels_config = config.get("physics", {}).get("channels", {})
     c_speed = float(config.get("physics", {}).get("speed_of_light", 299792458.0))
     if len(z_arr) < 2:
@@ -290,7 +296,7 @@ def process_single_file(args: tuple[str | Path, Mapping[str, Any], logging.Logge
     try:
         nc_file = Path(nc_path)
         stem = nc_file.stem
-        save_path = Path.cwd() / config["directories"]["processed_data"] / stem[:4] / stem[4:6] / stem / f"{stem}_level1_rcs.nc"
+        save_path = level1_output_path(nc_file, config)
         logger.info(f"[{stem}] Initializing Level 1 processing...")
         ds_raw, z_arr = load_and_prepare_level0(nc_file, logger)
         final_ds = apply_all_physical_corrections(ds_raw, z_arr, config, logger)
@@ -320,6 +326,22 @@ def process_level_1(config: Mapping[str, Any], logger: logging.Logger) -> None:
     if not files:
         logger.warning(f"No Level 0 files found in {in_dir}. Exiting.")
         return
-    logger.info(f"Found {len(files)} Level 0 files.")
+
+    incremental = _incremental_enabled(config)
+    files_to_process = []
+    skipped_count = 0
     for file_path in files:
+        output_path = level1_output_path(file_path, config)
+        if incremental and output_path.exists():
+            logger.info(f"[SKIPPED] Level 1 already exists for {file_path.name}: {output_path}")
+            skipped_count += 1
+            continue
+        files_to_process.append(file_path)
+
+    if not files_to_process:
+        logger.info(f"No Level 0 files require Level 1 processing. Skipped {skipped_count} existing products.")
+        return
+
+    logger.info(f"Found {len(files_to_process)} Level 0 files to process ({skipped_count} skipped).")
+    for file_path in files_to_process:
         logger.info(process_single_file((str(file_path), config, logger)))
