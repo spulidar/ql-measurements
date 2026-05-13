@@ -114,6 +114,46 @@ def _slide_glue_core(
     return best_idx, best_corr, best_slope, best_intercept
 
 
+def glue_signals_at_bins(
+    analog_sig: np.ndarray,
+    pc_sig: np.ndarray,
+    min_bin: int,
+    max_bin: int,
+    slope: float,
+    intercept: float,
+) -> np.ndarray:
+    """Glue two 1D signals with a linear fade-in/fade-out transition.
+
+    The output is on the photon-counting signal scale. Below ``min_bin`` the
+    scaled analog signal is used. Above ``max_bin`` the photon-counting signal is
+    used. Inside the gluing window, both are linearly blended to avoid a hard
+    discontinuity at the split altitude.
+    """
+    analog = np.asarray(analog_sig, dtype=np.float64)
+    photon = np.asarray(pc_sig, dtype=np.float64)
+    if analog.ndim != 1 or photon.ndim != 1 or analog.size != photon.size:
+        raise ValueError("analog_sig and pc_sig must be 1D arrays with the same length.")
+
+    n_bins = analog.size
+    min_bin = max(int(min_bin), 0)
+    max_bin = min(int(max_bin), n_bins)
+    if max_bin <= min_bin:
+        raise ValueError("max_bin must be greater than min_bin for gluing.")
+
+    scaled_analog = analog * float(slope) + float(intercept)
+    glued = photon.copy()
+    glued[:min_bin] = scaled_analog[:min_bin]
+
+    gluing_length = max_bin - min_bin
+    lower_weights = 1.0 - np.arange(gluing_length, dtype=np.float64) / float(gluing_length)
+    upper_weights = 1.0 - lower_weights
+    glued[min_bin:max_bin] = (
+        lower_weights * scaled_analog[min_bin:max_bin]
+        + upper_weights * photon[min_bin:max_bin]
+    )
+    return glued
+
+
 def slide_glue_signals(
     analog_sig: np.ndarray,
     pc_sig: np.ndarray,
@@ -152,16 +192,21 @@ def slide_glue_signals(
     if best_idx == -1:
         glued_sig = pc_vals.copy()
         split_point = -1
+        min_bin = -1
+        max_bin = -1
     else:
+        min_bin = max(int(best_idx), 0)
+        max_bin = min(int(best_idx + window_size), n)
         split_point = int(best_idx + (window_size // 2))
-        glued_sig = pc_vals.copy()
-        glued_sig[:split_point] = (an_vals[:split_point] * best_slope) + best_intercept
+        glued_sig = glue_signals_at_bins(an_vals, pc_vals, min_bin, max_bin, best_slope, best_intercept)
 
     if return_diagnostics:
         diagnostics = {
             "best_idx": int(best_idx),
             "best_corr": float(best_corr),
             "split_point": int(split_point),
+            "min_bin": int(min_bin),
+            "max_bin": int(max_bin),
             "search_min_idx": int(search_min_idx),
             "search_max_idx": int(search_max_idx),
             "window_size": int(window_size),
@@ -170,6 +215,8 @@ def slide_glue_signals(
             altitude_arr = np.asarray(altitude, dtype=np.float64)
             if altitude_arr.ndim == 1 and split_point < altitude_arr.size:
                 diagnostics["split_altitude"] = float(altitude_arr[split_point])
+                diagnostics["min_altitude"] = float(altitude_arr[min_bin])
+                diagnostics["max_altitude"] = float(altitude_arr[max_bin - 1])
         return glued_sig, split_point, float(best_slope), float(best_intercept), diagnostics
 
     return glued_sig, split_point, float(best_slope), float(best_intercept)
