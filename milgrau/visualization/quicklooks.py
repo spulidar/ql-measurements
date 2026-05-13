@@ -73,6 +73,89 @@ def _save_figure(fig: Any, out_path: str | Path, dpi: int) -> Path:
     return path
 
 
+def _get_gap_threshold_minutes(config: dict[str, Any], data_slice: xr.DataArray) -> float:
+    """Return the temporal-gap threshold for drawing missing acquisition gaps."""
+    quicklook_cfg = config.get("visualization", {}).get("quicklook", {}) or {}
+    configured = quicklook_cfg.get("max_time_gap_minutes")
+    if configured is not None:
+        return float(configured)
+
+    if "time" not in data_slice.coords or data_slice.sizes.get("time", 0) < 3:
+        return 10.0
+
+    times = pd.to_datetime(data_slice["time"].values)
+    deltas_min = np.diff(times.values).astype("timedelta64[s]").astype(float) / 60.0
+    finite = deltas_min[np.isfinite(deltas_min) & (deltas_min > 0.0)]
+    if finite.size == 0:
+        return 10.0
+    return max(float(np.nanmedian(finite) * 3.0), 5.0)
+
+
+def _insert_time_gap_markers(data_slice: xr.DataArray, config: dict[str, Any]) -> xr.DataArray:
+    """Insert NaN profiles into large temporal gaps so quicklooks show missing data.
+
+    Without this step, pcolormesh-style quicklooks visually stretch the previous
+    and next profiles across long acquisition gaps. NaN marker profiles force the
+    gap to be rendered with the colormap's ``bad`` color.
+    """
+    if "time" not in data_slice.dims or "altitude" not in data_slice.dims:
+        return data_slice
+    if data_slice.sizes.get("time", 0) < 2:
+        return data_slice
+
+    da = data_slice.transpose("time", "altitude")
+    times = pd.to_datetime(da["time"].values)
+    values = np.asarray(da.values)
+    threshold = pd.Timedelta(minutes=_get_gap_threshold_minutes(config, da))
+    marker_delta = pd.Timedelta(seconds=1)
+
+    new_times: list[pd.Timestamp] = []
+    new_profiles: list[np.ndarray] = []
+    inserted = False
+
+    for idx in range(len(times)):
+        new_times.append(times[idx])
+        new_profiles.append(values[idx, :])
+        if idx == len(times) - 1:
+            continue
+
+        gap = times[idx + 1] - times[idx]
+        if gap > threshold:
+            left_marker = times[idx] + marker_delta
+            right_marker = times[idx + 1] - marker_delta
+            if right_marker <= left_marker:
+                midpoint = times[idx] + gap / 2
+                left_marker = midpoint
+                right_marker = midpoint
+            nan_profile = np.full(values.shape[1], np.nan, dtype=np.float64)
+            new_times.extend([left_marker, right_marker])
+            new_profiles.extend([nan_profile, nan_profile.copy()])
+            inserted = True
+
+    if not inserted:
+        return data_slice
+
+    result = xr.DataArray(
+        np.stack(new_profiles, axis=0),
+        dims=("time", "altitude"),
+        coords={"time": np.asarray(new_times, dtype="datetime64[ns]"), "altitude": da["altitude"].values},
+        attrs=da.attrs,
+        name=da.name,
+    )
+    result["altitude"].attrs.update(da["altitude"].attrs)
+    return result
+
+
+def _quicklook_colormap(config: dict[str, Any]):
+    """Return the colormap used for quicklooks, including missing-data color."""
+    quicklook_cfg = config.get("visualization", {}).get("quicklook", {}) or {}
+    cmap_name = str(quicklook_cfg.get("colormap", "jet"))
+    missing_color = str(quicklook_cfg.get("missing_data_color", "lightgray"))
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_bad(color=missing_color)
+    return cmap
+
+
 def plot_quicklook(
     data_slice: xr.DataArray,
     error_slice: xr.DataArray,
@@ -92,15 +175,16 @@ def plot_quicklook(
     date_title, _ = extract_datetime_strings(ds)
     pretty_channel = format_channel_name(channel_name)
     color = channel_color(channel_name)
+    display_data = _insert_time_gap_markers(data_slice, config)
 
     fig = plt.figure(figsize=(15, 7.5))
     gs = gridspec.GridSpec(1, 2, width_ratios=[4, 1], wspace=0.03)
 
     ax0 = plt.subplot(gs[0])
-    plot = data_slice.plot(
+    plot = display_data.plot(
         x="time",
         y="altitude",
-        cmap="jet",
+        cmap=_quicklook_colormap(config),
         robust=True,
         vmin=0,
         add_colorbar=False,
