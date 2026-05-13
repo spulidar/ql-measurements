@@ -25,6 +25,11 @@ def _safe_mode(values) -> float:
         return float(np.nanmedian(values))
 
 
+def _incremental_enabled(config: dict) -> bool:
+    """Return whether incremental processing is enabled."""
+    return bool(config.get("processing", {}).get("incremental", False))
+
+
 def filter_laser_shots(
     df_raw: pd.DataFrame,
     logger: logging.Logger,
@@ -102,13 +107,21 @@ def process_level_0(config: dict, logger: logging.Logger) -> None:
         return
 
     out_base_dir = Path.cwd() / config["directories"]["processed_data"]
+    incremental = _incremental_enabled(config)
     success_count = 0
+    skipped_count = 0
     total_groups = len(df_good["meas_id"].unique())
 
     for meas_id, group_df in df_good.groupby("meas_id"):
         save_id = f"{meas_id[:8]}sa{meas_id[8:]}"
         out_dir = out_base_dir / save_id[:4] / save_id[4:6] / save_id
         netcdf_path = out_dir / f"{save_id}.nc"
+
+        if incremental and netcdf_path.exists():
+            logger.info(f"[SKIPPED] Level 0 already exists for {save_id}: {netcdf_path}")
+            skipped_count += 1
+            continue
+
         logger.info(f"Processing group [{save_id}]...")
 
         try:
@@ -155,4 +168,6 @@ def process_level_0(config: dict, logger: logging.Logger) -> None:
         except Exception:
             logger.error(f"  -> [ERROR] Fatal error converting {save_id}:\n{traceback.format_exc()}")
 
-    logger.info(f"=== Processed {success_count}/{total_groups} groups. LIBIDS finished! ===")
+    logger.info(
+        f"=== LIBIDS finished: processed {success_count}, skipped {skipped_count}, total groups {total_groups}. ==="
+    )
