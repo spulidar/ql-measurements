@@ -17,9 +17,6 @@ numba>=0.58.0
 # Visualization & QA Plots
 matplotlib>=3.7.0
 
-# Cloud Publisher (Cloudflare R2 / AWS S3)
-boto3>=1.26.0
-
 # Web Scraping / Atmospheric Data
 siphon
 tenacity>=8.2.0
