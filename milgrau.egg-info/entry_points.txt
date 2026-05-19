@@ -1,0 +1,5 @@
+[console_scripts]
+milgrau-lebear = scripts.run_lebear:main
+milgrau-libids = scripts.run_libids:main
+milgrau-lipancora = scripts.run_lipancora:main
+milgrau-liracos = scripts.run_liracos:main
