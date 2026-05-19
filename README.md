@@ -6,15 +6,6 @@ MILGRAU is a Python-based atmospheric lidar processing suite developed for the *
 
 The system is designed to process raw Licel lidar measurements into physically traceable atmospheric products, from raw signal standardization to range-corrected signals and, under development, Level 2 aerosol optical-property retrievals.
 
-MILGRAU follows a modular, configuration-driven architecture and prioritizes:
-
-- physically explicit lidar signal processing;
-- reproducible NetCDF data products;
-- uncertainty propagation through the processing chain;
-- LALINET-oriented scientific conventions;
-- external parameterization through `config.yaml`;
-- robust handling of noisy, cloudy and non-ideal atmospheric observations.
-
 ---
 
 ## Scientific purpose
