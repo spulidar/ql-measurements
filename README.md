@@ -34,56 +34,6 @@ The main scientific objective is to provide a transparent processing framework f
 
 ---
 
-## Repository architecture
-
-```text
-milgrau/
-├── milgrau/
-│   ├── config/
-│   │   ├── schema.py
-│   │   └── loader.py
-│   ├── io/
-│   │   ├── filesystem.py
-│   │   ├── inventory.py
-│   │   ├── licel.py
-│   │   ├── logging_utils.py
-│   │   ├── netcdf.py
-│   │   ├── radiosonde.py
-│   │   └── weather.py
-│   ├── physics/
-│   │   ├── atmosphere.py
-│   │   ├── constants.py
-│   │   ├── corrections.py
-│   │   ├── gluing.py
-│   │   ├── kfs.py
-│   │   ├── molecular.py
-│   │   ├── pbl.py
-│   │   ├── time.py
-│   │   └── tropopause.py
-│   ├── pipeline/
-│   │   ├── libids.py
-│   │   ├── lipancora.py
-│   │   ├── liracos.py
-│   │   └── lebear.py
-│   └── visualization/
-│       ├── level2_qa.py
-│       ├── quicklooks.py
-│       └── style.py
-├── scripts/
-│   ├── run_libids.py
-│   ├── run_lipancora.py
-│   ├── run_liracos.py
-│   └── run_lebear.py
-├── config.yaml
-├── pyproject.toml
-├── requirements.txt
-└── README.md
-```
-
-The `milgrau/` package contains the scientific and technical implementation.  
-The `scripts/` directory contains the executable entry points for each processing stage.
-
----
 
 ## Level 0 — LIBIDS
 
