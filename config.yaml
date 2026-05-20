@@ -4,6 +4,7 @@
 
 project:
   name: "MILGRAU"
+  full_name: "Multi-Indexed LALINET GeneRAlized and Unified algorithm"
   station_name: "SPU-Lidar"
   institution: "IPEN/USP"
   timezone: "America/Sao_Paulo"
@@ -17,7 +18,7 @@ processing:
   dark_current_max_association_hours: 12.0
   quarantine_spurious_files: true
   delete_spurious_files: false
-  spurious_extensions: [ ".dpp", ".zip", ".txt"]
+  spurious_extensions: [".dpp", ".zip", ".txt"]
   quarantine_dir: "01-data/_quarantine"
   max_workers_io: 1
   max_workers_cpu: 1
@@ -35,20 +36,17 @@ site:
   timezone: "America/Sao_Paulo"
 
 physics:
-  latitude: -23.5615
-  longitude: -46.7383
   vertical_resolution_m: 7.5
   speed_of_light_m_s: 299792458.0
-  speed_of_light: 299792458.0
   default_surface_temp_c: 25.0
   default_surface_pressure_hpa: 940.0
-  bg_start_m: 29000.0
-  bg_stop_m: 29999.0
-  bg_start: 29000
-  bg_stop: 29999
+  background_start_m: 29000.0
+  background_stop_m: 29999.0
   pbl_min_search_m: 500.0
   pbl_max_search_m: 4000.0
   pbl_smooth_bins: 15
+
+  # Channel constants: [deadtime_us, bin_shift_bins, background_offset]
   channels:
     "355.PC": [0.0020, -2, 0.0005]
     "355.AN": [0.0000,  8, 0.0000]
@@ -96,7 +94,6 @@ radiosonde:
   station_id: "83779"
   station_name: "Campo de Marte"
   fallback_to_standard_atmosphere: true
-  fallback_to_standard: true
   cache_dir: "01-data/wyoming_cache"
 
 surface_weather:
@@ -118,6 +115,9 @@ visualization:
     show_pbl: true
     show_tropopause: true
     mean_profile_smooth_bins: 20
+    max_time_gap_minutes: 10
+    missing_data_color: "lightgray"
+    colormap: "jet"
   level2_qa:
     enabled: true
     max_altitude_km: 30.0
@@ -130,7 +130,7 @@ inversion:
   interactive_qa: true
   wavelengths_to_process: [355, 532]
   temporal_average_minutes: 15
-  kfs_mode: "two_sided"   # options: backward, two_sided
+  kfs_mode: "two_sided"
   products:
     save_glued_signal: true
     save_molecular_profile: true
@@ -144,15 +144,16 @@ inversion:
   aerosol_ref_fraction: 0.0
   min_lidar_ratio_sr: 10.0
   allow_negative_aerosol: false
+
   molecular_fit:
     ref_alt_min_m: 15000.0
     ref_alt_max_m: 22000.0
     ref_window_bins: 100
     lidar_ratio_molecular_sr: 8.377580409572781
-    lidar_ratio_molecular: 8.377580409572781
     max_relative_slope: 0.05
     max_relative_variance: 0.10
     min_valid_fraction: 0.50
+
   gluing:
     enabled: true
     window_length_bins: 120
@@ -160,9 +161,10 @@ inversion:
     intercept_threshold: 5.0
     gaussian_threshold: 2.0
     minmax_threshold: 2.0
-    search_min_idx: 80      # 80 * 7.5 m = 0.6 km
-    search_max_idx: 500     # 500 * 7.5 m = 3.75 km
+    search_min_idx: 80
+    search_max_idx: 500
     fallback_to_photon_counting: true
+
   cloud_screening:
     enabled: true
     min_altitude_m: 500.0
@@ -174,50 +176,12 @@ inversion:
     vertical_dilation_bins: 2
     exclude_clouds_from_reference_fit: true
     stop_kfs_below_optically_thick_clouds: true
+
   lidar_ratio_std_sr:
     "355": 15.0
     "532": 10.0
     "1064": 10.0
-  lidar_ratios:
-    "355":
-      "01": 75.95
-      "02": 116.08
-      "03": 93.00
-      "04": 96.05
-      "05": 81.16
-      "06": 78.26
-      "07": 78.21
-      "08": 81.14
-      "09": 84.69
-      "10": 84.87
-      "11": 91.06
-      "12": 99.35
-    "532":
-      "01": 58.11
-      "02": 66.06
-      "03": 61.93
-      "04": 69.50
-      "05": 62.07
-      "06": 61.73
-      "07": 58.88
-      "08": 55.05
-      "09": 55.78
-      "10": 57.83
-      "11": 57.11
-      "12": 75.17
-    "1064":
-      "01": 35.94
-      "02": 25.52
-      "03": 35.37
-      "04": 40.76
-      "05": 39.81
-      "06": 43.76
-      "07": 36.92
-      "08": 30.85
-      "09": 29.74
-      "10": 33.44
-      "11": 30.83
-      "12": 41.43
+
   lidar_ratios_sr:
     "355":
       "01": 75.95
