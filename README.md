@@ -386,7 +386,7 @@ milgrau-lebear
 
 ---
 
-## 6. Developer mode
+### Developer mode
 
 Use this option only if you are going to edit the MILGRAU source code:
 
@@ -395,7 +395,7 @@ pip install -e .
 ```
 ---
 
-## 7. Update MILGRAU
+## Update MILGRAU
 
 To download new changes from GitHub:
 
@@ -411,7 +411,7 @@ pip install .
 
 ---
 
-## 8. Basic usage
+## Basic usage
 
 Activate the virtual environment whenever you want to use MILGRAU:
 
