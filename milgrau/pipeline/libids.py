@@ -14,6 +14,7 @@ from milgrau.io.filesystem import ensure_directories
 from milgrau.io.inventory import build_measurement_inventory
 from milgrau.io.licel import parse_licel_group
 from milgrau.io.netcdf import build_level0_netcdf
+from milgrau.io.paths import level0_output_path, measurement_save_id
 from milgrau.io.weather import fetch_surface_weather
 
 
@@ -106,16 +107,15 @@ def process_level_0(config: dict, logger: logging.Logger) -> None:
         logger.warning("=== No data survived quality control. Exiting. ===")
         return
 
-    out_base_dir = Path.cwd() / config["directories"]["processed_data"]
     incremental = _incremental_enabled(config)
     success_count = 0
     skipped_count = 0
     total_groups = len(df_good["meas_id"].unique())
 
     for meas_id, group_df in df_good.groupby("meas_id"):
-        save_id = f"{meas_id[:8]}sa{meas_id[8:]}"
-        out_dir = out_base_dir / save_id[:4] / save_id[4:6] / save_id
-        netcdf_path = out_dir / f"{save_id}.nc"
+        save_id = measurement_save_id(meas_id)
+        netcdf_path = level0_output_path(meas_id, config)
+        out_dir = netcdf_path.parent
 
         if incremental and netcdf_path.exists():
             logger.info(f"[SKIPPED] Level 0 already exists for {save_id}: {netcdf_path}")
@@ -130,9 +130,7 @@ def process_level_0(config: dict, logger: logging.Logger) -> None:
             dt_utc_mean = group_df["start_time_utc"].iloc[len(group_df) // 2].to_pydatetime()
             weather_data = fetch_surface_weather(dt_utc_mean, lat, lon, logger=logger)
             if not weather_data:
-                logger.warning(
-                    f"  -> [{save_id}] Weather API/cache failed. Using fallback standard surface values."
-                )
+                logger.warning(f"  -> [{save_id}] Weather API/cache failed. Using fallback standard surface values.")
                 weather_data = {
                     "temperature_c": float(config["physics"].get("default_surface_temp_c", 25.0)),
                     "pressure_hpa": float(config["physics"].get("default_surface_pressure_hpa", 940.0)),
@@ -168,6 +166,4 @@ def process_level_0(config: dict, logger: logging.Logger) -> None:
         except Exception:
             logger.error(f"  -> [ERROR] Fatal error converting {save_id}:\n{traceback.format_exc()}")
 
-    logger.info(
-        f"=== LIBIDS finished: processed {success_count}, skipped {skipped_count}, total groups {total_groups}. ==="
-    )
+    logger.info(f"=== LIBIDS finished: processed {success_count}, skipped {skipped_count}, total groups {total_groups}. ===")
