@@ -307,7 +307,31 @@ where the values are:
 
 ---
 
-## Basic installation
+# MILGRAU Installation
+
+## 1. Install Git and Python
+
+### Debian
+
+```bash
+sudo apt update
+sudo apt install git python3 python3-pip python3-venv
+```
+
+### Arch 
+
+```bash
+sudo pacman -Syu
+sudo pacman -S git python python-pip
+```
+
+### Fedora
+
+```bash
+sudo dnf install git python3 python3-pip
+```
+
+## 2. Download MILGRAU
 
 Clone the repository:
 
@@ -316,39 +340,42 @@ git clone https://github.com/spulidar/milgrau.git
 cd milgrau
 ```
 
-Create and activate a virtual environment:
+## 3. Create a virtual environment
+
+Inside the MILGRAU directory:
 
 ```bash
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv
 ```
 
-Install dependencies:
+Activate the environment:
+
+### Linux / macOS
 
 ```bash
-pip install -r requirements.txt
+source .venv/bin/activate
 ```
 
-For editable development:
+### Windows
+
+```cmd
+.venv\Scripts\Activate.bat
+```
+---
+
+## 4. Install MILGRAU
+
+For users who only want to run the program:
 
 ```bash
-pip install -e .
+pip install .
 ```
 
 ---
 
-## Basic usage
+## 5. Run modules
 
-Run the processing stages with:
-
-```bash
-python scripts/run_libids.py
-python scripts/run_lipancora.py
-python scripts/run_liracos.py
-python scripts/run_lebear.py
-```
-
-Or, after editable installation:
+After installation, you can run:
 
 ```bash
 milgrau-libids
@@ -357,7 +384,61 @@ milgrau-liracos
 milgrau-lebear
 ```
 
-At the current development stage, `milgrau-lebear` validates the Level 1 input contract but does not yet produce the final Level 2 optical-property product.
+---
+
+## 6. Developer mode
+
+Use this option only if you are going to edit the MILGRAU source code:
+
+```bash
+pip install -e .
+```
+---
+
+## 7. Update MILGRAU
+
+To download new changes from GitHub:
+
+```bash
+git pull
+```
+
+If the package was not installed in developer mode, reinstall it:
+
+```bash
+pip install .
+```
+
+---
+
+## 8. Basic usage
+
+Activate the virtual environment whenever you want to use MILGRAU:
+
+```bash
+cd milgrau
+source .venv/bin/activate
+```
+
+Then run:
+
+```bash
+milgrau-libids
+```
+
+---
+
+## TLDR
+
+```bash
+sudo apt install git python3 python3-pip python3-venv
+git clone https://github.com/spulidar/milgrau.git
+cd milgrau
+python -m venv .venv
+source .venv/bin/activate
+pip install .
+milgrau-libids
+```
 
 ---
 
