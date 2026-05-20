@@ -7,7 +7,7 @@ name = "milgrau"
 version = "0.1.0"
 description = "MILGRAU processing suite for SPU-Lidar atmospheric products"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8.10"
 authors = [
   { name = "Luisa Mello" },
   { name = "Fábio J. S. Lopes" },
