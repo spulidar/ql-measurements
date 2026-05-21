@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import traceback
 from pathlib import Path
@@ -11,11 +12,14 @@ from typing import Any
 import xarray as xr
 from matplotlib import pyplot as plt
 
+from milgrau.io.contracts import validate_level1_contract
 from milgrau.io.filesystem import ensure_directories
+from milgrau.io.paths import global_mean_rcs_output_path, processed_data_root, quicklook_output_path
 from milgrau.visualization.quicklooks import format_channel_name, plot_global_mean_rcs, plot_quicklook
 
 RCS_VARIABLE = "range_corrected_signal"
 RCS_ERROR_VARIABLE = "range_corrected_signal_error"
+GLOBAL_MEAN_MANIFEST_SUFFIX = ".manifest.json"
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -36,14 +40,23 @@ def _get_output_format(config: dict[str, Any]) -> str:
 
 def _quicklook_output_path(output_folder: Path, file_name_prefix: str, channel_name: str, max_altitude: float, config: dict[str, Any]) -> Path:
     """Return the expected output path for one quicklook plot."""
-    pretty_channel = format_channel_name(channel_name)
-    output_format = _get_output_format(config)
-    return output_folder / f"Quicklook_{file_name_prefix}_{pretty_channel.replace(' ', '_')}_{float(max_altitude):g}km.{output_format}"
+    return quicklook_output_path(
+        output_folder=output_folder,
+        file_name_prefix=file_name_prefix,
+        formatted_channel_name=format_channel_name(channel_name),
+        max_altitude_km=max_altitude,
+        output_format=_get_output_format(config),
+    )
 
 
 def _global_mean_output_path(output_folder: Path, file_name_prefix: str, config: dict[str, Any]) -> Path:
     """Return the expected output path for the global mean RCS plot."""
-    return output_folder / f"GlobalMeanRCS_{file_name_prefix}.{_get_output_format(config)}"
+    return global_mean_rcs_output_path(output_folder, file_name_prefix, _get_output_format(config))
+
+
+def _manifest_path(plot_path: Path) -> Path:
+    """Return the metadata manifest path associated with one plot."""
+    return plot_path.with_suffix(plot_path.suffix + GLOBAL_MEAN_MANIFEST_SUFFIX)
 
 
 def _get_visualization_channels(config: dict[str, Any]) -> list[str]:
@@ -73,6 +86,50 @@ def _get_altitude_ranges_km(config: dict[str, Any]) -> list[float]:
     return altitude_ranges or [5.0, 15.0, 30.0]
 
 
+def _global_mean_signature(
+    nc_file: Path,
+    ds: xr.Dataset,
+    config: dict[str, Any],
+    channels_to_plot: list[str],
+    altitude_ranges_km: list[float],
+) -> dict[str, Any]:
+    """Build a lightweight signature for deciding whether global mean is stale."""
+    available_channels = {str(channel) for channel in ds.channel.values}
+    plotted_channels = [channel for channel in channels_to_plot if channel in available_channels]
+    return {
+        "source_file": nc_file.name,
+        "source_mtime_ns": nc_file.stat().st_mtime_ns if nc_file.exists() else None,
+        "output_format": _get_output_format(config),
+        "channels_to_plot": plotted_channels,
+        "altitude_ranges_km": [float(value) for value in altitude_ranges_km],
+        "rcs_variable": RCS_VARIABLE,
+        "rcs_error_variable": RCS_ERROR_VARIABLE,
+    }
+
+
+def _load_manifest(path: Path) -> dict[str, Any] | None:
+    """Load a JSON manifest if it exists and is valid."""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_manifest(path: Path, payload: dict[str, Any]) -> None:
+    """Write a JSON manifest for incremental plot decisions."""
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _is_global_mean_current(plot_path: Path, signature: dict[str, Any]) -> bool:
+    """Return whether a global mean plot exists and matches the current signature."""
+    if not plot_path.exists():
+        return False
+    stored = _load_manifest(_manifest_path(plot_path))
+    return stored == signature
+
+
 def _prepare_level1_for_visualization(ds: xr.Dataset) -> xr.Dataset:
     """Return a plotting-ready Level 1 dataset with altitude in kilometers."""
     if "altitude" not in ds.coords:
@@ -95,9 +152,7 @@ def _extract_level1_boundaries(ds: xr.Dataset) -> tuple[xr.DataArray | None, flo
 
 def _validate_l1_visualization_contract(ds: xr.Dataset) -> None:
     """Validate the Level 1 variables required by LIRACOS."""
-    missing = [name for name in (RCS_VARIABLE, RCS_ERROR_VARIABLE) if name not in ds]
-    if missing:
-        raise KeyError(f"Level 1 file is missing required RCS variable(s): {missing}")
+    validate_level1_contract(ds)
 
 
 def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, logging.Logger]) -> str:
@@ -140,9 +195,7 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
                     sig_slice = rc_signal.sel(altitude=slice(0, max_altitude))
                     err_slice = rc_error.sel(altitude=slice(0, max_altitude))
                     if sig_slice.size == 0:
-                        logger.warning(
-                            f"[{file_name_prefix}] Empty altitude slice for {channel_name} up to {max_altitude} km."
-                        )
+                        logger.warning(f"[{file_name_prefix}] Empty altitude slice for {channel_name} up to {max_altitude} km.")
                         continue
                     plot_quicklook(
                         data_slice=sig_slice,
@@ -164,13 +217,16 @@ def process_single_nc(args: tuple[str | Path, dict[str, Any], str | Path, loggin
                     gc.collect()
 
             global_mean_path = _global_mean_output_path(output_folder, file_name_prefix, config)
-            if incremental and global_mean_path.exists():
-                logger.info(f"[SKIPPED] Global mean RCS already exists: {global_mean_path.name}")
+            global_signature = _global_mean_signature(nc_file, ds, config, channels_to_plot, altitude_ranges)
+            if incremental and _is_global_mean_current(global_mean_path, global_signature):
+                logger.info(f"[SKIPPED] Global mean RCS is current: {global_mean_path.name}")
                 skipped_count += 1
             else:
                 logger.info(f"[{file_name_prefix}] Generating global mean RCS profile...")
-                plot_global_mean_rcs(ds, str(output_folder), file_name_prefix, config, str(root_path))
-                generated_count += 1
+                plot_path = plot_global_mean_rcs(ds, str(output_folder), file_name_prefix, config, str(root_path))
+                if plot_path is not None:
+                    _write_manifest(_manifest_path(Path(plot_path)), global_signature)
+                    generated_count += 1
 
         plt.close("all")
         gc.collect()
@@ -186,7 +242,7 @@ def process_all_level1_files(
 ) -> None:
     """Discover and render all Level 1 NetCDF files under processed_data."""
     root_path = Path.cwd() if root_dir is None else Path(root_dir)
-    base_data_folder = root_path / config["directories"]["processed_data"]
+    base_data_folder = processed_data_root(config, root_dir=root_path)
     nc_files = sorted(base_data_folder.rglob("*_level1_rcs.nc"))
     if not nc_files:
         logger.warning(f"No Level 1 NetCDF data found in '{base_data_folder}'. Exiting.")
