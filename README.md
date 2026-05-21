@@ -12,8 +12,7 @@ The system is designed to process raw Licel lidar measurements into physically t
 
 Requirements
 - Git
-- Python 3
-- pip
+- Python 3 and pip
 - venv support for virtual environments
 
 
