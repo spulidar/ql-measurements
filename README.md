@@ -66,7 +66,9 @@ brew install git python
 On Windows, use **PowerShell**.
 
 Use `winget` or install Git and Python manually using the official installers:
+
 Git: https://git-scm.com/download/win
+
 Python: https://www.python.org/downloads/windows/
 
 When installing Python, make sure to enable:
