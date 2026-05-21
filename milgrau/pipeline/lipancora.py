@@ -11,7 +11,10 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from milgrau.io.contracts import validate_level0_contract, validate_level1_contract
 from milgrau.io.filesystem import ensure_directories
+from milgrau.io.paths import level1_output_path as canonical_level1_output_path
+from milgrau.io.paths import processed_data_root
 from milgrau.io.radiosonde import fetch_wyoming_radiosonde
 from milgrau.physics.corrections import apply_instrumental_corrections
 from milgrau.physics.pbl import calculate_pbl_height_gradient
@@ -25,9 +28,7 @@ def _incremental_enabled(config: Mapping[str, Any]) -> bool:
 
 def level1_output_path(nc_file: str | Path, config: Mapping[str, Any]) -> Path:
     """Return the Level 1 output path for one Level 0 NetCDF file."""
-    nc_path = Path(nc_file)
-    stem = nc_path.stem
-    return Path.cwd() / config["directories"]["processed_data"] / stem[:4] / stem[4:6] / stem / f"{stem}_level1_rcs.nc"
+    return canonical_level1_output_path(nc_file, config)
 
 
 def _finite_or_fill(value: Any, fill_value: float = -999.0) -> float:
@@ -46,11 +47,29 @@ def _get_channel_constant(
 ) -> tuple[float, int, float]:
     """Return instrumental constants for one channel."""
     if ch_name not in channels_config:
-        logger.warning(
-            f"  -> Channel {ch_name} is missing from physics.channels. Using neutral correction constants."
-        )
+        logger.warning(f"  -> Channel {ch_name} is missing from physics.channels. Using neutral correction constants.")
     deadtime, shift, bg_offset = channels_config.get(ch_name, [0.0, 0, 0.0])
     return float(deadtime), int(shift), float(bg_offset)
+
+
+def _level0_dark_current_available(ds: xr.Dataset, channel_index: int) -> bool:
+    """Return whether a Level 0 dark-current profile is available for one channel."""
+    if "Background_Profile" not in ds:
+        return False
+    if "Background_Profile_Available" in ds:
+        try:
+            return bool(int(ds["Background_Profile_Available"].isel(channel=channel_index).values) == 1)
+        except Exception:
+            return False
+    return True
+
+
+def _diagnostic_vector(diagnostics: dict[str, Any], name: str, time_coord: xr.DataArray) -> xr.DataArray:
+    """Return a per-time diagnostic vector aligned with the Level 1 time coordinate."""
+    value = diagnostics[name]
+    if isinstance(value, xr.DataArray):
+        return value.rename({"range": "altitude"}) if "range" in value.dims else value
+    return xr.DataArray(np.full(time_coord.size, value), dims=["time"], coords={"time": time_coord})
 
 
 def load_and_prepare_level0(nc_path: str | Path, logger: logging.Logger) -> tuple[xr.Dataset, np.ndarray]:
@@ -58,10 +77,7 @@ def load_and_prepare_level0(nc_path: str | Path, logger: logging.Logger) -> tupl
     try:
         ds = xr.open_dataset(nc_path)
         ds.load()
-        required_vars = ["Raw_Data_Start_Time", "Raw_Data_Range_Resolution", "channel_string", "Raw_Lidar_Data"]
-        missing = [var for var in required_vars if var not in ds]
-        if missing:
-            raise KeyError(f"Level 0 file is missing required variables: {missing}")
+        validate_level0_contract(ds)
 
         time_dt = pd.to_datetime(ds["Raw_Data_Start_Time"].values, unit="s")
         ds = ds.assign_coords(time=time_dt)
@@ -72,10 +88,7 @@ def load_and_prepare_level0(nc_path: str | Path, logger: logging.Logger) -> tupl
             raise ValueError("Raw_Data_Range_Resolution contains no finite values.")
         dz = float(dz_values[0])
         if not np.allclose(dz_values, dz, rtol=0.0, atol=1e-6):
-            logger.warning(
-                "  -> Not all channels have identical range resolution. "
-                f"Using the first value: {dz:.6f} m."
-            )
+            logger.warning(f"  -> Not all channels have identical range resolution. Using the first value: {dz:.6f} m.")
 
         z_arr = np.arange(ds.sizes["points"], dtype=np.float64) * dz
         channel_strings = ds["channel_string"].values.astype(str)
@@ -100,7 +113,7 @@ def apply_all_physical_corrections(
 ) -> xr.Dataset:
     """Apply Level 1 instrumental corrections to all available channels."""
     channels_config = config.get("physics", {}).get("channels", {})
-    c_speed = float(config.get("physics", {}).get("speed_of_light", 299792458.0))
+    c_speed = float(config.get("physics", {}).get("speed_of_light", config.get("physics", {}).get("speed_of_light_m_s", 299792458.0)))
     if len(z_arr) < 2:
         raise ValueError("Altitude grid must contain at least two bins.")
     dz = float(z_arr[1] - z_arr[0])
@@ -115,6 +128,7 @@ def apply_all_physical_corrections(
     z_da = xr.DataArray(z_arr, dims=["range"], attrs={"units": "m"})
     channel_datasets = []
     status_records = []
+    diagnostic_records = []
     logger.info("  -> Running instrumental corrections channel-by-channel...")
 
     for ch_idx, ch_name in enumerate(ds.channel.values.astype(str)):
@@ -125,23 +139,21 @@ def apply_all_physical_corrections(
             bg_high = float(ds["Background_High"].isel(channel=ch_idx))
             bg_mask = (ds["altitude"] >= bg_low) & (ds["altitude"] <= bg_high)
             if int(bg_mask.sum().values) < 2:
-                logger.warning(
-                    f"  -> Channel {ch_name}: background mask has fewer than 2 bins ({bg_low:.1f}-{bg_high:.1f} m)."
-                )
+                logger.warning(f"  -> Channel {ch_name}: background mask has fewer than 2 bins ({bg_low:.1f}-{bg_high:.1f} m).")
 
             deadtime, shift, bg_offset = _get_channel_constant(channels_config, ch_name, logger)
             is_photon = "pc" in ch_name.lower() or "ph" in ch_name.lower()
             dc_prof, dc_err = None, None
-            if "Background_Profile" in ds:
+            if _level0_dark_current_available(ds, ch_idx):
                 dc_data = ds["Background_Profile"].isel(channel=ch_idx)
                 if dc_data.sizes.get("time_bck", 0) > 0:
-                    dc_prof = dc_data.mean(dim="time_bck", skipna=True).rename({"altitude": "range"})
-                    dc_err = dc_data.std(dim="time_bck", skipna=True).rename({"altitude": "range"}) / np.sqrt(
-                        max(ds.sizes.get("time_bck", 1), 1)
-                    )
-                    dark_current_used = True
+                    dc_mean = dc_data.mean(dim="time_bck", skipna=True)
+                    if np.isfinite(dc_mean.values).any():
+                        dc_prof = dc_mean.rename({"altitude": "range"})
+                        dc_err = dc_data.std(dim="time_bck", skipna=True).rename({"altitude": "range"}) / np.sqrt(max(ds.sizes.get("time_bck", 1), 1))
+                        dark_current_used = True
 
-            corrected, corrected_error, rcs, rcs_error = apply_instrumental_corrections(
+            corrected, corrected_error, rcs, rcs_error, diagnostics = apply_instrumental_corrections(
                 sig=sig.rename({"altitude": "range"}),
                 z_da=z_da,
                 shots=shots,
@@ -153,6 +165,7 @@ def apply_all_physical_corrections(
                 bg_mask=bg_mask.rename({"altitude": "range"}),
                 dc_prof=dc_prof,
                 dc_err=dc_err,
+                return_diagnostics=True,
             )
 
             ch_ds = xr.Dataset(
@@ -165,6 +178,20 @@ def apply_all_physical_corrections(
             )
             channel_datasets.append(ch_ds)
             status_records.append((ch_name, 1, int(dark_current_used)))
+            diagnostic_records.append(
+                {
+                    "channel": ch_name,
+                    "deadtime_correction_applied": int(diagnostics["deadtime_correction_applied"]),
+                    "deadtime_clipping_fraction": _diagnostic_vector(diagnostics, "deadtime_clipping_fraction", ds.time),
+                    "deadtime_min_denominator_observed": float(diagnostics["deadtime_min_denominator_observed"]),
+                    "deadtime_min_denominator_allowed": float(diagnostics["deadtime_min_denominator_allowed"]),
+                    "bin_shift_bins": int(diagnostics["bin_shift_bins"]),
+                    "bin_shift_invalid_fraction": _diagnostic_vector(diagnostics, "bin_shift_invalid_fraction", ds.time),
+                }
+            )
+            clip_fraction = float(diagnostics["deadtime_clipping_fraction"].max(skipna=True).values)
+            if clip_fraction > 0.0:
+                logger.warning(f"  -> Channel {ch_name}: dead-time denominator clipped in up to {100.0 * clip_fraction:.2f}% of bins.")
             logger.info(f"  -> Channel {ch_name}: corrected successfully.")
         except Exception as exc:
             status_records.append((ch_name, 0, int(dark_current_used)))
@@ -181,9 +208,7 @@ def apply_all_physical_corrections(
             "units": "channel native corrected units",
         }
     )
-    final_ds["corrected_signal_error"].attrs.update(
-        {"long_name": "One-sigma uncertainty of instrumentally corrected lidar signal", "units": "channel native corrected units"}
-    )
+    final_ds["corrected_signal_error"].attrs.update({"long_name": "One-sigma uncertainty of instrumentally corrected lidar signal", "units": "channel native corrected units"})
     final_ds["range_corrected_signal"].attrs.update(
         {
             "long_name": "Range Corrected Signal",
@@ -191,56 +216,69 @@ def apply_all_physical_corrections(
             "units": "a.u. m^2",
         }
     )
-    final_ds["range_corrected_signal_error"].attrs.update(
-        {"long_name": "One-sigma uncertainty of Range Corrected Signal", "units": "a.u. m^2"}
-    )
+    final_ds["range_corrected_signal_error"].attrs.update({"long_name": "One-sigma uncertainty of Range Corrected Signal", "units": "a.u. m^2"})
 
     status_map = {name: (ok, dc) for name, ok, dc in status_records}
     final_channels = final_ds.channel.values.astype(str)
-    final_ds["channel_correction_success"] = xr.DataArray(
-        [status_map.get(ch, (0, 0))[0] for ch in final_channels], dims=["channel"], coords={"channel": final_channels}
-    ).astype(np.int8)
-    final_ds["dark_current_used"] = xr.DataArray(
-        [status_map.get(ch, (0, 0))[1] for ch in final_channels], dims=["channel"], coords={"channel": final_channels}
-    ).astype(np.int8)
+    final_ds["channel_correction_success"] = xr.DataArray([status_map.get(ch, (0, 0))[0] for ch in final_channels], dims=["channel"], coords={"channel": final_channels}).astype(np.int8)
+    final_ds["dark_current_used"] = xr.DataArray([status_map.get(ch, (0, 0))[1] for ch in final_channels], dims=["channel"], coords={"channel": final_channels}).astype(np.int8)
     final_ds["channel_correction_success"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
     final_ds["dark_current_used"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used used"})
+
+    diag_by_channel = {record["channel"]: record for record in diagnostic_records}
+    final_ds["deadtime_correction_applied"] = xr.DataArray(
+        [diag_by_channel[ch]["deadtime_correction_applied"] for ch in final_channels],
+        dims=["channel"],
+        coords={"channel": final_channels},
+    ).astype(np.int8)
+    final_ds["deadtime_min_denominator_observed"] = xr.DataArray(
+        [diag_by_channel[ch]["deadtime_min_denominator_observed"] for ch in final_channels],
+        dims=["channel"],
+        coords={"channel": final_channels},
+    ).astype(np.float32)
+    final_ds["deadtime_min_denominator_allowed"] = xr.DataArray(
+        [diag_by_channel[ch]["deadtime_min_denominator_allowed"] for ch in final_channels],
+        dims=["channel"],
+        coords={"channel": final_channels},
+    ).astype(np.float32)
+    final_ds["bin_shift_bins"] = xr.DataArray(
+        [diag_by_channel[ch]["bin_shift_bins"] for ch in final_channels],
+        dims=["channel"],
+        coords={"channel": final_channels},
+    ).astype(np.int16)
+
+    deadtime_fraction = np.stack([diag_by_channel[ch]["deadtime_clipping_fraction"].values for ch in final_channels], axis=1)
+    bin_shift_fraction = np.stack([diag_by_channel[ch]["bin_shift_invalid_fraction"].values for ch in final_channels], axis=1)
+    final_ds["deadtime_clipping_fraction"] = xr.DataArray(
+        deadtime_fraction,
+        dims=["time", "channel"],
+        coords={"time": final_ds.time, "channel": final_channels},
+    ).astype(np.float32)
+    final_ds["bin_shift_invalid_fraction"] = xr.DataArray(
+        bin_shift_fraction,
+        dims=["time", "channel"],
+        coords={"time": final_ds.time, "channel": final_channels},
+    ).astype(np.float32)
+    final_ds["deadtime_correction_applied"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_applied applied"})
+    final_ds["deadtime_clipping_fraction"].attrs.update({"units": "1", "description": "Fraction of altitude bins where the non-paralyzable dead-time denominator was clipped."})
+    final_ds["bin_shift_invalid_fraction"].attrs.update({"units": "1", "description": "Fraction of altitude bins introduced by bin-shift alignment and marked as NaN."})
+    final_ds["bin_shift_bins"].attrs.update({"units": "bins"})
     return final_ds
 
 
-def estimate_pbl_timeseries(
-    final_ds: xr.Dataset,
-    z_arr: np.ndarray,
-    config: Mapping[str, Any],
-    logger: logging.Logger,
-) -> xr.Dataset:
+def estimate_pbl_timeseries(final_ds: xr.Dataset, z_arr: np.ndarray, config: Mapping[str, Any], logger: logging.Logger) -> xr.Dataset:
     """Estimate Planetary Boundary Layer height for every time profile."""
     try:
-        pbl_channel = next(
-            (ch for ch in final_ds.channel.values.astype(str) if "an" in ch.lower() and "532" in ch),
-            str(final_ds.channel.values[0]),
-        )
+        pbl_channel = next((ch for ch in final_ds.channel.values.astype(str) if "an" in ch.lower() and "532" in ch), str(final_ds.channel.values[0]))
         physics_cfg = config.get("physics", {})
         min_search_m = float(physics_cfg.get("pbl_min_search_m", 500.0))
         max_search_m = float(physics_cfg.get("pbl_max_search_m", 4000.0))
         smooth_bins = int(physics_cfg.get("pbl_smooth_bins", 15))
         rcs_matrix = final_ds["range_corrected_signal"].sel(channel=pbl_channel).values
         logger.info(f"  -> Tracking PBL using {pbl_channel} ({min_search_m:.0f}-{max_search_m:.0f} m).")
-        pbl_h = [
-            calculate_pbl_height_gradient(
-                rcs_matrix[t, :], z_arr, min_search_m=min_search_m, max_search_m=max_search_m, smooth_bins=smooth_bins
-            )
-            for t in range(rcs_matrix.shape[0])
-        ]
+        pbl_h = [calculate_pbl_height_gradient(rcs_matrix[t, :], z_arr, min_search_m=min_search_m, max_search_m=max_search_m, smooth_bins=smooth_bins) for t in range(rcs_matrix.shape[0])]
         final_ds["PBL_Height_km"] = xr.DataArray(pbl_h, dims=["time"], coords={"time": final_ds.time}).astype(np.float32)
-        final_ds["PBL_Height_km"].attrs = {
-            "units": "km",
-            "method": "Gradient method on smoothed RCS",
-            "reference_channel": pbl_channel,
-            "min_search_m": min_search_m,
-            "max_search_m": max_search_m,
-            "smooth_bins": smooth_bins,
-        }
+        final_ds["PBL_Height_km"].attrs = {"units": "km", "method": "Gradient method on smoothed RCS", "reference_channel": pbl_channel, "min_search_m": min_search_m, "max_search_m": max_search_m, "smooth_bins": smooth_bins}
         return final_ds
     except Exception as exc:
         logger.warning(f"  -> PBL tracking failed: {exc}")
@@ -255,9 +293,7 @@ def integrate_thermodynamics(final_ds: xr.Dataset, config: Mapping[str, Any], lo
         df_radio = fetch_wyoming_radiosonde(dt_utc, station_id, logger)
         if df_radio is None or df_radio.empty:
             logger.warning("  -> Radiosonde unavailable. Level 1 will keep surface-only thermodynamics.")
-            final_ds.attrs.update(
-                {"radiosonde_station_id": station_id, "radiosonde_available": "false", "tropopause_cpt_km": -999.0, "tropopause_lrt_km": -999.0}
-            )
+            final_ds.attrs.update({"radiosonde_station_id": station_id, "radiosonde_available": "false", "tropopause_cpt_km": -999.0, "tropopause_lrt_km": -999.0})
             return final_ds
 
         required_cols = {"height", "temperature", "pressure"}
@@ -271,9 +307,7 @@ def integrate_thermodynamics(final_ds: xr.Dataset, config: Mapping[str, Any], lo
 
         final_ds = final_ds.assign_coords(radiosonde_altitude=("radiosonde_altitude", df_radio["height"].values.astype(np.float64)))
         final_ds["radiosonde_altitude"].attrs.update({"units": "m", "long_name": "Radiosonde altitude above mean sea level"})
-        final_ds["Radiosonde_Temperature_K"] = (
-            ("radiosonde_altitude",), (df_radio["temperature"].values.astype(np.float64) + 273.15).astype(np.float32)
-        )
+        final_ds["Radiosonde_Temperature_K"] = (("radiosonde_altitude",), (df_radio["temperature"].values.astype(np.float64) + 273.15).astype(np.float32))
         final_ds["Radiosonde_Pressure_hPa"] = (("radiosonde_altitude",), df_radio["pressure"].values.astype(np.float32))
         final_ds["Radiosonde_Temperature_K"].attrs.update({"units": "K", "long_name": "Radiosonde air temperature", "source": "Wyoming Upper Air sounding"})
         final_ds["Radiosonde_Pressure_hPa"].attrs.update({"units": "hPa", "long_name": "Radiosonde atmospheric pressure", "source": "Wyoming Upper Air sounding"})
@@ -311,6 +345,7 @@ def process_single_file(args: tuple[str | Path, Mapping[str, Any], logging.Logge
                 "Altitude_units": "m",
             }
         )
+        validate_level1_contract(final_ds)
         ensure_directories(save_path.parent)
         encoding = {var: {"zlib": True, "complevel": 4} for var in final_ds.data_vars if final_ds[var].ndim > 0}
         final_ds.to_netcdf(save_path, encoding=encoding)
@@ -321,7 +356,7 @@ def process_single_file(args: tuple[str | Path, Mapping[str, Any], logging.Logge
 
 def process_level_1(config: Mapping[str, Any], logger: logging.Logger) -> None:
     """Discover and process every Level 0 NetCDF file into Level 1."""
-    in_dir = Path.cwd() / config["directories"]["processed_data"]
+    in_dir = processed_data_root(config)
     files = [f for f in sorted(in_dir.rglob("*.nc")) if "level" not in f.name]
     if not files:
         logger.warning(f"No Level 0 files found in {in_dir}. Exiting.")
