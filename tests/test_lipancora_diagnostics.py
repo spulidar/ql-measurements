@@ -69,8 +69,8 @@ def test_apply_instrumental_corrections_reports_deadtime_clipping() -> None:
     )
 
     assert diagnostics["deadtime_correction_applied"] is True
-    assert float(diagnostics["deadtime_clipping_fraction"].values[0]) == 0.4
-    assert diagnostics["deadtime_min_denominator_allowed"] == 0.05
+    assert np.isclose(float(diagnostics["deadtime_clipping_fraction"].values[0]), 0.4)
+    assert np.isclose(diagnostics["deadtime_min_denominator_allowed"], 0.05)
 
 
 def test_apply_all_physical_corrections_persists_diagnostics() -> None:
@@ -109,5 +109,5 @@ def test_apply_all_physical_corrections_persists_diagnostics() -> None:
     assert int(result["deadtime_correction_applied"].sel(channel="532.PC")) == 1
     assert int(result["deadtime_correction_applied"].sel(channel="532.AN")) == 0
     assert float(result["deadtime_clipping_fraction"].sel(channel="532.PC").max()) > 0.0
-    assert float(result["bin_shift_invalid_fraction"].sel(channel="532.AN").max()) == 0.4
+    assert np.isclose(float(result["bin_shift_invalid_fraction"].sel(channel="532.AN").max()), 0.4)
     assert np.all(np.isnan(result["corrected_signal"].sel(channel="532.AN").isel(altitude=slice(0, 2)).values))
