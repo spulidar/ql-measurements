@@ -8,18 +8,189 @@ The system is designed to process raw Licel lidar measurements into physically t
 
 ---
 
+# Installation
+
+Requirements
+- Git
+- Python 3
+- pip
+- venv support for virtual environments
+
+
+## 1. Install requirements
+
+MILGRAU requires:
+
+- Git
+- Python 3
+- pip
+- venv support for virtual environments
+
+---
+
+### Debian / Ubuntu
+
+```bash
+sudo apt update
+sudo apt install git python3 python3-pip python3-venv
+```
+---
+
+### Arch / CachyOS / Manjaro
+
+```bash
+sudo pacman -Syu
+sudo pacman -S git python python-pip
+```
+
+---
+
+### Fedora
+
+```bash
+sudo dnf install git python3 python3-pip
+```
+
+---
+
+### macOS
+
+First, install Homebrew if it is not already installed:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Then install Git and Python:
+
+```bash
+brew install git python
+```
+
+---
+
+### Windows
+
+On Windows, use **PowerShell**.
+
+Use `winget` or install Git and Python manually using the official installers:
+Git: https://git-scm.com/download/win
+Python: https://www.python.org/downloads/windows/
+
+When installing Python, make sure to enable:
+
+```text
+Add python.exe to PATH
+```
+
+---
+
+### Notes about Python commands
+
+Depending on the operating system, the Python command may be either `python` or `python3`, use whichever one works on your machine.
+
+
+---
+
+## 2. Download MILGRAU
+
+Clone the repository:
+
+```bash
+git clone https://github.com/spulidar/milgrau.git
+cd milgrau
+```
+
+## 3. Create a virtual environment
+
+Inside the MILGRAU directory:
+
+```bash
+python -m venv .venv
+```
+
+Activate the environment:
+
+### Linux / macOS
+
+```bash
+source .venv/bin/activate
+```
+
+### Windows (PowerShell)
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+---
+
+## 4. Install MILGRAU
+
+For users who only want to run the program:
+
+```bash
+pip install .
+```
+
+### Developer mode
+
+Use this option if you are going to edit the MILGRAU source code:
+
+```bash
+pip install -e .
+```
+
+---
+
+## 5. Run modules
+
+After installation, you can run:
+
+```bash
+milgrau-libids
+milgrau-lipancora
+milgrau-liracos
+milgrau-lebear
+```
+
+---
+
+## Update MILGRAU
+
+To download new changes from GitHub, run in the milgrau repository:
+
+```bash
+git pull
+```
+
+If the package was not installed in developer mode, reinstall it:
+
+```bash
+pip install .
+```
+
+---
+
+## Basic usage
+
+Activate the virtual environment whenever you want to use MILGRAU:
+
+```bash
+cd milgrau
+source .venv/bin/activate
+```
+
+# About MILGRAU
+
 ## Scientific purpose
 
 Elastic and Raman lidar systems measure atmospheric backscattered radiation as a function of time and range. These raw signals are affected by instrumental response, photon-counting limitations, analog offsets, background radiation, dark current, incomplete overlap, clouds and atmospheric variability.
 
 MILGRAU organizes the treatment of these signals into processing levels:
 
-1. **Level 0** — raw Licel measurements are parsed, quality-controlled and standardized into NetCDF files compatible with SCC-style processing.
-2. **Level 1** — instrumental corrections are applied and Range Corrected Signals are generated with propagated uncertainties.
-3. **Visualization** — Level 1 products are rendered as quicklooks and mean profiles for scientific inspection.
-4. **Level 2** — aerosol optical properties will be retrieved through molecular calibration, signal gluing and Klett-Fernald-Sasano inversion.
-
-The main scientific objective is to provide a transparent processing framework for the SPU-Lidar Station that can support both operational monitoring and research-grade atmospheric analysis.
+ **Level 0** — raw Licel measurements are parsed, quality-controlled and standardized into NetCDF files compatible with SCC-style processing.
+ **Level 1** — instrumental corrections are applied and Range Corrected Signals are generated with propagated uncertainties.
+ **Level 2** — aerosol optical properties will be retrieved through molecular calibration, signal gluing and Klett-Fernald-Sasano inversion.
 
 ---
 
@@ -256,145 +427,3 @@ where the values are:
 ```
 
 ---
-
-# MILGRAU Installation
-
-## 1. Install Git and Python
-
-### Debian
-
-```bash
-sudo apt update
-sudo apt install git python3 python3-pip python3-venv
-```
-
-### Arch 
-
-```bash
-sudo pacman -Syu
-sudo pacman -S git python python-pip
-```
-
-### Fedora
-
-```bash
-sudo dnf install git python3 python3-pip
-```
-
-## 2. Download MILGRAU
-
-Clone the repository:
-
-```bash
-git clone https://github.com/spulidar/milgrau.git
-cd milgrau
-```
-
-## 3. Create a virtual environment
-
-Inside the MILGRAU directory:
-
-```bash
-python -m venv .venv
-```
-
-Activate the environment:
-
-### Linux / macOS
-
-```bash
-source .venv/bin/activate
-```
-
-### Windows
-
-```cmd
-.venv\Scripts\Activate.bat
-```
----
-
-## 4. Install MILGRAU
-
-For users who only want to run the program:
-
-```bash
-pip install .
-```
-
----
-
-## 5. Run modules
-
-After installation, you can run:
-
-```bash
-milgrau-libids
-milgrau-lipancora
-milgrau-liracos
-milgrau-lebear
-```
-
----
-
-### Developer mode
-
-Use this option only if you are going to edit the MILGRAU source code:
-
-```bash
-pip install -e .
-```
----
-
-## Update MILGRAU
-
-To download new changes from GitHub:
-
-```bash
-git pull
-```
-
-If the package was not installed in developer mode, reinstall it:
-
-```bash
-pip install .
-```
-
----
-
-## Basic usage
-
-Activate the virtual environment whenever you want to use MILGRAU:
-
-```bash
-cd milgrau
-source .venv/bin/activate
-```
-
-Then run:
-
-```bash
-milgrau-libids
-```
-
----
-
-## TLDR
-
-```bash
-sudo apt install git python3 python3-pip python3-venv
-git clone https://github.com/spulidar/milgrau.git
-cd milgrau
-python -m venv .venv
-source .venv/bin/activate
-pip install .
-milgrau-libids
-```
-
----
-
-## Authors
-
-- Luisa Mello
-- Alexandre C. Yoshida
-- Alexandre Cacheffo
-- Fábio J. S. Lopes
