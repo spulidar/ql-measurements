@@ -14,7 +14,7 @@ test.py
 # ==========================================
 # MILGRAU Data Directories (Do NOT commit heavy data)
 # ==========================================
-01-data/
+01-data/**
 02-processed_data/
 measurements/
 
