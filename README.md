@@ -10,19 +10,12 @@ The system is designed to process raw Licel lidar measurements into physically t
 
 # Installation
 
-Requirements
-- Git
-- Python 3 and pip
-- venv support for virtual environments
-
-
 ## 1. Install requirements
 
 MILGRAU requires:
 
 - Git
-- Python 3
-- pip
+- Python 3 and pip
 - venv support for virtual environments
 
 ---
