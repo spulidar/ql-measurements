@@ -180,7 +180,9 @@ Elastic and Raman lidar systems measure atmospheric backscattered radiation as a
 MILGRAU organizes the treatment of these signals into processing levels:
 
  **Level 0** — raw Licel measurements are parsed, quality-controlled and standardized into NetCDF files compatible with SCC-style processing.
+ 
  **Level 1** — instrumental corrections are applied and Range Corrected Signals are generated with propagated uncertainties.
+ 
  **Level 2** — aerosol optical properties will be retrieved through molecular calibration, signal gluing and Klett-Fernald-Sasano inversion.
 
 ---
