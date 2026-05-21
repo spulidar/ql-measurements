@@ -136,19 +136,6 @@ pip install -e .
 
 ---
 
-## 5. Run modules
-
-After installation, you can run:
-
-```bash
-milgrau-libids
-milgrau-lipancora
-milgrau-liracos
-milgrau-lebear
-```
-
----
-
 ## Update MILGRAU
 
 To download new changes from GitHub, run in the milgrau repository:
@@ -173,6 +160,16 @@ Activate the virtual environment whenever you want to use MILGRAU:
 cd milgrau
 source .venv/bin/activate
 ```
+
+After installation and set up, you can run the modules:
+
+```bash
+milgrau-libids
+milgrau-lipancora
+milgrau-liracos
+milgrau-lebear
+```
+
 
 # About MILGRAU
 
