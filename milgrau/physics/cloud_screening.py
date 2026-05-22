@@ -13,8 +13,8 @@ from collections.abc import Mapping
 import numpy as np
 
 
-def _moving_median(values: np.ndarray, window_bins: int) -> np.ndarray:
-    """Return a centered moving median with NaN-aware edge handling."""
+def _moving_percentile(values: np.ndarray, window_bins: int, percentile: float) -> np.ndarray:
+    """Return a centered moving percentile with NaN-aware edge handling."""
     arr = np.asarray(values, dtype=np.float64)
     window = max(int(window_bins), 1)
     if window % 2 == 0:
@@ -26,7 +26,7 @@ def _moving_median(values: np.ndarray, window_bins: int) -> np.ndarray:
         stop = min(idx + half + 1, arr.size)
         local = arr[start:stop]
         if np.isfinite(local).any():
-            result[idx] = np.nanmedian(local)
+            result[idx] = np.nanpercentile(local, float(percentile))
     return result
 
 
@@ -77,9 +77,11 @@ def detect_anomalous_layer_mask(
 ) -> np.ndarray:
     """Detect strong positive anomalous layers in one RCS-like profile.
 
-    The detector compares the profile against a local moving median baseline and
-    uses a robust MAD scale. Only positive residuals inside the configured
-    altitude interval are flagged.
+    The detector compares the profile against a local low-percentile baseline
+    and uses a robust MAD scale. A low-percentile baseline is preferred over a
+    median here because broad positive layers can otherwise become their own
+    local baseline. Only positive residuals inside the configured altitude
+    interval are flagged.
     """
     profile = np.asarray(signal, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
@@ -92,7 +94,7 @@ def detect_anomalous_layer_mask(
     if candidate.sum() < max(int(min_cloud_bins), 3):
         return np.zeros(profile.size, dtype=bool)
 
-    baseline = _moving_median(profile, smooth_bins)
+    baseline = _moving_percentile(profile, smooth_bins, percentile=20.0)
     residual = profile - baseline
     residual_in_window = residual[candidate]
     residual_in_window = residual_in_window[np.isfinite(residual_in_window)]
