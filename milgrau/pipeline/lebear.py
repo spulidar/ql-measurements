@@ -111,6 +111,9 @@ def _get_molecular_fit_config(config: Mapping[str, Any]) -> dict[str, Any]:
         "ref_alt_min_m": float(fit_cfg.get("ref_alt_min_m", 22000.0)),
         "ref_alt_max_m": float(fit_cfg.get("ref_alt_max_m", 28000.0)),
         "ref_window_bins": int(fit_cfg.get("ref_window_bins", 100)),
+        "max_relative_slope": float(fit_cfg.get("max_relative_slope", 0.05)),
+        "max_relative_variance": float(fit_cfg.get("max_relative_variance", 0.10)),
+        "min_valid_fraction": float(fit_cfg.get("min_valid_fraction", 0.50)),
     }
 
 
@@ -146,6 +149,65 @@ def _build_kfs_branch(altitude_m: np.ndarray, ref_start_m: float, ref_stop_m: fl
     return branch
 
 
+def _evaluate_rayleigh_reference(
+    measured_signal: np.ndarray,
+    simulated_molecular_signal: np.ndarray,
+    altitude_m: np.ndarray,
+    reference_center_idx: int,
+    reference_window_bins: int,
+    fit_config: Mapping[str, Any],
+    calibration_factor: float,
+) -> dict[str, float | int]:
+    """Evaluate whether the selected Rayleigh reference window is acceptable."""
+    measured = np.asarray(measured_signal, dtype=np.float64)
+    simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
+    altitude = np.asarray(altitude_m, dtype=np.float64)
+    center = int(reference_center_idx)
+    half_window = max(int(reference_window_bins) // 2, 1)
+    start = max(center - half_window, 0)
+    stop = min(center + half_window + 1, measured.size)
+    ratio = measured[start:stop] / simulated[start:stop]
+    window_altitude = altitude[start:stop]
+    valid = np.isfinite(ratio) & np.isfinite(window_altitude) & (ratio > 0.0)
+    valid_count = int(valid.sum())
+    window_size = max(int(stop - start), 1)
+    valid_fraction = float(valid_count / window_size)
+
+    relative_variance = np.inf
+    relative_slope = np.inf
+    if valid_count >= 3:
+        valid_ratio = ratio[valid]
+        valid_altitude = window_altitude[valid]
+        mean_ratio = float(np.nanmean(valid_ratio))
+        if np.isfinite(mean_ratio) and mean_ratio > 0.0:
+            relative_variance = float(np.nanvar(valid_ratio) / (mean_ratio**2))
+            slope, _ = np.polyfit(valid_altitude, valid_ratio, 1)
+            altitude_span = float(np.nanmax(valid_altitude) - np.nanmin(valid_altitude))
+            relative_slope = float(abs(slope) * max(altitude_span, 1.0) / mean_ratio)
+
+    max_relative_slope = float(fit_config.get("max_relative_slope", 0.05))
+    max_relative_variance = float(fit_config.get("max_relative_variance", 0.10))
+    min_valid_fraction = float(fit_config.get("min_valid_fraction", 0.50))
+    success = (
+        np.isfinite(calibration_factor)
+        and calibration_factor > 0.0
+        and valid_fraction >= min_valid_fraction
+        and np.isfinite(relative_variance)
+        and relative_variance <= max_relative_variance
+        and np.isfinite(relative_slope)
+        and relative_slope <= max_relative_slope
+    )
+    return {
+        "success_flag": int(success),
+        "relative_slope": float(relative_slope),
+        "relative_variance": float(relative_variance),
+        "valid_fraction": float(valid_fraction),
+        "max_relative_slope": max_relative_slope,
+        "max_relative_variance": max_relative_variance,
+        "min_valid_fraction": min_valid_fraction,
+    }
+
+
 def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, str]:
     """Build pressure and temperature profiles on the lidar altitude grid."""
     site_cfg = config.get("site", {})
@@ -172,21 +234,8 @@ def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, 
     return standard_pressure.astype(np.float64), standard_temperature.astype(np.float64), "standard_atmosphere"
 
 
-def _propagate_glued_error(
-    analog_error: np.ndarray,
-    photon_error: np.ndarray,
-    slope: float,
-    min_bin: int,
-    max_bin: int,
-) -> np.ndarray:
-    """Propagate one-sigma uncertainty through analog/PC gluing weights.
-
-    The glued signal is on the photon-counting scale. Below ``min_bin`` the
-    scaled analog uncertainty is used. Above ``max_bin`` the photon-counting
-    uncertainty is used. Inside the fade window, uncertainties are propagated
-    with the same linear weights used by ``glue_signals_at_bins``:
-    ``sigma² = w_an² (slope sigma_an)² + w_pc² sigma_pc²``.
-    """
+def _propagate_glued_error(analog_error: np.ndarray, photon_error: np.ndarray, slope: float, min_bin: int, max_bin: int) -> np.ndarray:
+    """Propagate one-sigma uncertainty through analog/PC gluing weights."""
     analog = np.asarray(analog_error, dtype=np.float64)
     photon = np.asarray(photon_error, dtype=np.float64)
     if analog.ndim != 1 or photon.ndim != 1 or analog.size != photon.size:
@@ -201,24 +250,14 @@ def _propagate_glued_error(
     scaled_analog_error = abs(float(slope)) * analog
     glued_error = photon.copy()
     glued_error[:min_bin] = scaled_analog_error[:min_bin]
-
     gluing_length = max_bin - min_bin
     analog_weights = 1.0 - np.arange(gluing_length, dtype=np.float64) / float(gluing_length)
     photon_weights = 1.0 - analog_weights
-    glued_error[min_bin:max_bin] = np.sqrt(
-        (analog_weights * scaled_analog_error[min_bin:max_bin]) ** 2
-        + (photon_weights * photon[min_bin:max_bin]) ** 2
-    )
+    glued_error[min_bin:max_bin] = np.sqrt((analog_weights * scaled_analog_error[min_bin:max_bin]) ** 2 + (photon_weights * photon[min_bin:max_bin]) ** 2)
     return glued_error
 
 
-def _glue_wavelength_profiles(
-    ds_l1: xr.Dataset,
-    wavelength_nm: int,
-    altitude_m: np.ndarray,
-    config: Mapping[str, Any],
-    logger: logging.Logger,
-) -> dict[str, np.ndarray | str | None]:
+def _glue_wavelength_profiles(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.ndarray, config: Mapping[str, Any], logger: logging.Logger) -> dict[str, np.ndarray | str | None]:
     """Glue all time profiles for one wavelength and return signal matrices plus diagnostics."""
     analog_ch, photon_ch = _infer_channel_pair(ds_l1, wavelength_nm)
     if analog_ch is None and photon_ch is None:
@@ -245,7 +284,6 @@ def _glue_wavelength_profiles(
         photon_signal = signal_da.sel(channel=photon_ch).values.astype(np.float64)
         analog_error = error_da.sel(channel=analog_ch).values.astype(np.float64)
         photon_error = error_da.sel(channel=photon_ch).values.astype(np.float64)
-
         for time_idx in range(n_time):
             glued_profile, split_point, slope_i, intercept_i, diagnostics = slide_glue_signals(
                 analog_sig=analog_signal[time_idx, :],
@@ -271,24 +309,14 @@ def _glue_wavelength_profiles(
                 split_altitude_m[time_idx] = float(altitude_m[split_point])
                 start_altitude_m[time_idx] = float(altitude_m[min_bin])
                 stop_altitude_m[time_idx] = float(altitude_m[max_bin - 1])
-                glued_error[time_idx, :] = _propagate_glued_error(
-                    analog_error=analog_error[time_idx, :],
-                    photon_error=photon_error[time_idx, :],
-                    slope=slope_i,
-                    min_bin=min_bin,
-                    max_bin=max_bin,
-                )
+                glued_error[time_idx, :] = _propagate_glued_error(analog_error[time_idx, :], photon_error[time_idx, :], slope_i, min_bin, max_bin)
             elif gluing_cfg["fallback_to_photon_counting"]:
                 glued[time_idx, :] = photon_signal[time_idx, :]
                 glued_error[time_idx, :] = photon_error[time_idx, :]
                 fallback_flag[time_idx] = 1
             else:
                 logger.warning(f"  -> {wavelength_nm} nm profile {time_idx}: gluing failed and photon fallback is disabled.")
-
-        logger.info(
-            f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% "
-            f"({analog_ch} + {photon_ch}); fallback profiles: {int(fallback_flag.sum())}."
-        )
+        logger.info(f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% ({analog_ch} + {photon_ch}); fallback profiles: {int(fallback_flag.sum())}.")
         source = "analog_photon_glued"
     else:
         fallback_ch = photon_ch or analog_ch
@@ -349,16 +377,7 @@ def _error_by_groups(error_matrix: np.ndarray, groups: list[np.ndarray]) -> np.n
     return np.stack([_error_of_mean(error_matrix[group, :]) for group in groups], axis=0)
 
 
-def _run_kfs_profile(
-    rcs: np.ndarray,
-    rcs_error: np.ndarray,
-    altitude_m: np.ndarray,
-    beta_mol: np.ndarray,
-    ref_idx: int,
-    lr_base: float,
-    lr_std: float,
-    config: Mapping[str, Any],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _run_kfs_profile(rcs: np.ndarray, rcs_error: np.ndarray, altitude_m: np.ndarray, beta_mol: np.ndarray, ref_idx: int, lr_base: float, lr_std: float, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Run KFS for one RCS profile using the configured inversion options."""
     inv_cfg = config.get("inversion", {})
     return kfs_inversion_monte_carlo(
@@ -380,13 +399,13 @@ def _run_kfs_profile(
     )
 
 
-def _process_wavelength(
-    ds_l1: xr.Dataset,
-    wavelength_nm: int,
-    altitude_m: np.ndarray,
-    config: Mapping[str, Any],
-    logger: logging.Logger,
-) -> dict[str, Any]:
+def _nan_optical_products_like(reference: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return NaN optical products with the same shape as one reference array."""
+    nan_arr = np.full_like(np.asarray(reference, dtype=np.float64), np.nan, dtype=np.float64)
+    return nan_arr.copy(), nan_arr.copy(), nan_arr.copy(), nan_arr.copy()
+
+
+def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.ndarray, config: Mapping[str, Any], logger: logging.Logger) -> dict[str, Any]:
     """Process one wavelength into block and mean Level 2 arrays."""
     gluing = _glue_wavelength_profiles(ds_l1, wavelength_nm, altitude_m, config, logger)
     pressure_hpa, temperature_k, molecular_source = _build_thermodynamic_profile(ds_l1, altitude_m, config)
@@ -400,7 +419,6 @@ def _process_wavelength(
     glued_error = gluing["glued_error"]  # type: ignore[assignment]
     glued_mean = np.nanmean(glued, axis=0)
     glued_error_mean = _error_of_mean(glued_error)
-
     block_minutes = _get_temporal_average_minutes(config)
     block_time, block_groups = _block_groups(ds_l1["time"].values, block_minutes)
     glued_block = _mean_by_groups(glued, block_groups)
@@ -423,34 +441,28 @@ def _process_wavelength(
         reference_center_idx=ref_idx,
         reference_window_bins=fit_cfg["ref_window_bins"],
     )
+    rayleigh_qa = _evaluate_rayleigh_reference(glued_mean, simulated_molecular_rcs, altitude_m, ref_idx, fit_cfg["ref_window_bins"], fit_cfg, calibration_factor)
 
     lr_base, lr_std = _get_lidar_ratio(config, wavelength_nm, ds_l1["time"].values[0])
-    beta_mean, beta_std, alpha_mean, alpha_std = _run_kfs_profile(
-        glued_mean,
-        glued_error_mean,
-        altitude_m,
-        beta_mol,
-        ref_idx,
-        lr_base,
-        lr_std,
-        config,
-    )
+    if int(rayleigh_qa["success_flag"]) == 1:
+        beta_mean, beta_std, alpha_mean, alpha_std = _run_kfs_profile(glued_mean, glued_error_mean, altitude_m, beta_mol, ref_idx, lr_base, lr_std, config)
+    else:
+        logger.warning(
+            f"  -> {wavelength_nm} nm Rayleigh reference rejected: "
+            f"slope={rayleigh_qa['relative_slope']:.3g}, variance={rayleigh_qa['relative_variance']:.3g}, "
+            f"valid_fraction={rayleigh_qa['valid_fraction']:.3g}. Optical KFS products set to NaN."
+        )
+        beta_mean, beta_std, alpha_mean, alpha_std = _nan_optical_products_like(glued_mean)
 
     beta_block = []
     beta_block_std = []
     alpha_block = []
     alpha_block_std = []
     for block_idx in range(glued_block.shape[0]):
-        b_mean, b_std, a_mean, a_std = _run_kfs_profile(
-            glued_block[block_idx, :],
-            glued_error_block[block_idx, :],
-            altitude_m,
-            beta_mol,
-            ref_idx,
-            lr_base,
-            lr_std,
-            config,
-        )
+        if int(rayleigh_qa["success_flag"]) == 1:
+            b_mean, b_std, a_mean, a_std = _run_kfs_profile(glued_block[block_idx, :], glued_error_block[block_idx, :], altitude_m, beta_mol, ref_idx, lr_base, lr_std, config)
+        else:
+            b_mean, b_std, a_mean, a_std = _nan_optical_products_like(glued_block[block_idx, :])
         beta_block.append(b_mean)
         beta_block_std.append(b_std)
         alpha_block.append(a_mean)
@@ -485,6 +497,10 @@ def _process_wavelength(
         "rayleigh_reference_start_altitude_m": ref_start_m,
         "rayleigh_reference_stop_altitude_m": ref_stop_m,
         "rayleigh_reference_valid_bins": ref_valid_bins,
+        "rayleigh_reference_success_flag": rayleigh_qa["success_flag"],
+        "rayleigh_reference_relative_slope": rayleigh_qa["relative_slope"],
+        "rayleigh_reference_relative_variance": rayleigh_qa["relative_variance"],
+        "rayleigh_reference_valid_fraction": rayleigh_qa["valid_fraction"],
         "rayleigh_calibration_factor": calibration_factor,
         "lidar_ratio_assumed_sr": lr_base,
         "lidar_ratio_std_sr": lr_std,
@@ -503,13 +519,7 @@ def _process_wavelength(
     }
 
 
-def _build_level2_dataset(
-    ds_l1: xr.Dataset,
-    results: list[dict[str, Any]],
-    altitude_m: np.ndarray,
-    source_file: Path,
-    config: Mapping[str, Any],
-) -> xr.Dataset:
+def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], altitude_m: np.ndarray, source_file: Path, config: Mapping[str, Any]) -> xr.Dataset:
     """Build an xarray Level 2 dataset from wavelength processing results."""
     wavelengths = np.asarray([result["wavelength"] for result in results], dtype=np.int32)
     time_values = ds_l1["time"].values
@@ -559,6 +569,10 @@ def _build_level2_dataset(
             "rayleigh_reference_start_altitude_m": (("wavelength",), vector("rayleigh_reference_start_altitude_m")),
             "rayleigh_reference_stop_altitude_m": (("wavelength",), vector("rayleigh_reference_stop_altitude_m")),
             "rayleigh_reference_valid_bins": (("wavelength",), vector("rayleigh_reference_valid_bins")),
+            "rayleigh_reference_success_flag": (("wavelength",), vector("rayleigh_reference_success_flag").astype(np.int8)),
+            "rayleigh_reference_relative_slope": (("wavelength",), vector("rayleigh_reference_relative_slope")),
+            "rayleigh_reference_relative_variance": (("wavelength",), vector("rayleigh_reference_relative_variance")),
+            "rayleigh_reference_valid_fraction": (("wavelength",), vector("rayleigh_reference_valid_fraction")),
             "rayleigh_calibration_factor": (("wavelength",), vector("rayleigh_calibration_factor")),
             "lidar_ratio_assumed_sr": (("wavelength",), vector("lidar_ratio_assumed_sr")),
             "lidar_ratio_std_sr": (("wavelength",), vector("lidar_ratio_std_sr")),
@@ -577,17 +591,16 @@ def _build_level2_dataset(
     )
     ds_l2["altitude"].attrs.update({"units": "m", "long_name": "Altitude above station"})
     ds_l2["wavelength"].attrs.update({"units": "nm"})
-    ds_l2["kfs_branch"].attrs.update(
-        {
-            "flag_values": "0, 1, 2, 3",
-            "flag_meanings": "invalid backward_below_reference reference_window forward_above_reference_experimental",
-            "description": "KFS/Fernald-Sasano retrieval branch by altitude. Above-reference two-sided retrieval is experimental and noise-sensitive.",
-        }
-    )
+    ds_l2["kfs_branch"].attrs.update({"flag_values": "0, 1, 2, 3", "flag_meanings": "invalid backward_below_reference reference_window forward_above_reference_experimental", "description": "KFS/Fernald-Sasano retrieval branch by altitude. Above-reference two-sided retrieval is experimental and noise-sensitive."})
     ds_l2["gluing_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
     ds_l2["gluing_fallback_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used photon_counting_fallback_used"})
     ds_l2["gluing_start_altitude_m"].attrs.update({"units": "m", "description": "Start altitude of analog/photon-counting fade-in/fade-out gluing window."})
     ds_l2["gluing_stop_altitude_m"].attrs.update({"units": "m", "description": "Stop altitude of analog/photon-counting fade-in/fade-out gluing window."})
+    ds_l2["rayleigh_reference_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed passed", "description": "Whether the Rayleigh reference window passed slope, variance, valid-fraction and positive-calibration checks."})
+    ds_l2["rayleigh_reference_relative_slope"].attrs.update({"units": "1", "description": "Relative ratio change across the Rayleigh reference window."})
+    ds_l2["rayleigh_reference_relative_variance"].attrs.update({"units": "1", "description": "Variance of measured/molecular ratio normalized by squared mean ratio."})
+    ds_l2["rayleigh_reference_valid_fraction"].attrs.update({"units": "1", "description": "Fraction of finite positive bins in the Rayleigh reference window."})
+    fit_cfg = _get_molecular_fit_config(config)
     ds_l2.attrs.update(
         {
             "Processing_level": "Level 2: LEBEAR block and mean optical inversion",
@@ -597,6 +610,9 @@ def _build_level2_dataset(
             "KFS_Mode": kfs_mode,
             "KFS_Mode_Description": _kfs_mode_description(kfs_mode),
             "Gluing_Error_Propagation": "Weighted one-sigma propagation across fade window: sigma² = w_an²(slope sigma_an)² + w_pc² sigma_pc².",
+            "Rayleigh_Reference_Max_Relative_Slope": float(fit_cfg["max_relative_slope"]),
+            "Rayleigh_Reference_Max_Relative_Variance": float(fit_cfg["max_relative_variance"]),
+            "Rayleigh_Reference_Min_Valid_Fraction": float(fit_cfg["min_valid_fraction"]),
             "Molecular_sources": ";".join(str(result["molecular_source"]) for result in results),
             "Gluing_sources": ";".join(str(result["gluing_source"]) for result in results),
             "Analog_channels": ";".join(str(result["analog_channel"]) for result in results),
@@ -640,14 +656,7 @@ def process_single_level1_file(nc_file: str | Path, config: Mapping[str, Any], l
             with xr.open_dataset(output_path) as ds_saved, xr.open_dataset(nc_path) as ds_l1_saved:
                 ds_saved.load()
                 ds_l1_saved.load()
-                generated = plot_all_level2_qa(
-                    ds_l2=ds_saved,
-                    output_folder=qa_dir,
-                    file_name_prefix=output_path.name.replace(LEVEL2_SUFFIX, ""),
-                    config=dict(config),
-                    root_dir=Path.cwd(),
-                    ds_l1=ds_l1_saved,
-                )
+                generated = plot_all_level2_qa(ds_l2=ds_saved, output_folder=qa_dir, file_name_prefix=output_path.name.replace(LEVEL2_SUFFIX, ""), config=dict(config), root_dir=Path.cwd(), ds_l1=ds_l1_saved)
             logger.info(f"  -> Generated {len(generated)} Level 2 QA plot(s).")
         return f"[OK] {nc_path.name} Level 2 generated successfully: {output_path}"
     except Exception:
