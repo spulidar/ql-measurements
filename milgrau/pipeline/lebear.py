@@ -134,12 +134,7 @@ def _get_temporal_average_minutes(config: Mapping[str, Any]) -> int:
     return max(int(config.get("inversion", {}).get("temporal_average_minutes", 15)), 1)
 
 
-def _build_kfs_branch(
-    altitude_m: np.ndarray,
-    ref_start_m: float,
-    ref_stop_m: float,
-    mode: str,
-) -> np.ndarray:
+def _build_kfs_branch(altitude_m: np.ndarray, ref_start_m: float, ref_stop_m: float, mode: str) -> np.ndarray:
     """Build per-altitude validity/branch flags for KFS products."""
     altitude = np.asarray(altitude_m, dtype=np.float64)
     branch = np.zeros(altitude.size, dtype=np.int8)
@@ -177,6 +172,46 @@ def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, 
     return standard_pressure.astype(np.float64), standard_temperature.astype(np.float64), "standard_atmosphere"
 
 
+def _propagate_glued_error(
+    analog_error: np.ndarray,
+    photon_error: np.ndarray,
+    slope: float,
+    min_bin: int,
+    max_bin: int,
+) -> np.ndarray:
+    """Propagate one-sigma uncertainty through analog/PC gluing weights.
+
+    The glued signal is on the photon-counting scale. Below ``min_bin`` the
+    scaled analog uncertainty is used. Above ``max_bin`` the photon-counting
+    uncertainty is used. Inside the fade window, uncertainties are propagated
+    with the same linear weights used by ``glue_signals_at_bins``:
+    ``sigma² = w_an² (slope sigma_an)² + w_pc² sigma_pc²``.
+    """
+    analog = np.asarray(analog_error, dtype=np.float64)
+    photon = np.asarray(photon_error, dtype=np.float64)
+    if analog.ndim != 1 or photon.ndim != 1 or analog.size != photon.size:
+        raise ValueError("analog_error and photon_error must be 1D arrays with the same length.")
+
+    n_bins = analog.size
+    min_bin = max(int(min_bin), 0)
+    max_bin = min(int(max_bin), n_bins)
+    if max_bin <= min_bin:
+        raise ValueError("max_bin must be greater than min_bin for gluing uncertainty propagation.")
+
+    scaled_analog_error = abs(float(slope)) * analog
+    glued_error = photon.copy()
+    glued_error[:min_bin] = scaled_analog_error[:min_bin]
+
+    gluing_length = max_bin - min_bin
+    analog_weights = 1.0 - np.arange(gluing_length, dtype=np.float64) / float(gluing_length)
+    photon_weights = 1.0 - analog_weights
+    glued_error[min_bin:max_bin] = np.sqrt(
+        (analog_weights * scaled_analog_error[min_bin:max_bin]) ** 2
+        + (photon_weights * photon[min_bin:max_bin]) ** 2
+    )
+    return glued_error
+
+
 def _glue_wavelength_profiles(
     ds_l1: xr.Dataset,
     wavelength_nm: int,
@@ -198,6 +233,8 @@ def _glue_wavelength_profiles(
     success_flag = np.zeros(n_time, dtype=np.int8)
     fallback_flag = np.zeros(n_time, dtype=np.int8)
     split_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
+    start_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
+    stop_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
     slope = np.full(n_time, np.nan, dtype=np.float64)
     intercept = np.full(n_time, np.nan, dtype=np.float64)
     correlation = np.full(n_time, np.nan, dtype=np.float64)
@@ -227,11 +264,20 @@ def _glue_wavelength_profiles(
             intercept[time_idx] = intercept_i
             correlation[time_idx] = float(diagnostics.get("best_corr", np.nan))
             if split_point >= 0:
+                min_bin = int(diagnostics.get("min_bin", max(split_point - gluing_cfg["window_size"] // 2, 0)))
+                max_bin = int(diagnostics.get("max_bin", min(split_point + gluing_cfg["window_size"] // 2, n_alt)))
                 glued[time_idx, :] = glued_profile
                 success_flag[time_idx] = 1
                 split_altitude_m[time_idx] = float(altitude_m[split_point])
-                glued_error[time_idx, :split_point] = np.abs(slope_i) * analog_error[time_idx, :split_point]
-                glued_error[time_idx, split_point:] = photon_error[time_idx, split_point:]
+                start_altitude_m[time_idx] = float(altitude_m[min_bin])
+                stop_altitude_m[time_idx] = float(altitude_m[max_bin - 1])
+                glued_error[time_idx, :] = _propagate_glued_error(
+                    analog_error=analog_error[time_idx, :],
+                    photon_error=photon_error[time_idx, :],
+                    slope=slope_i,
+                    min_bin=min_bin,
+                    max_bin=max_bin,
+                )
             elif gluing_cfg["fallback_to_photon_counting"]:
                 glued[time_idx, :] = photon_signal[time_idx, :]
                 glued_error[time_idx, :] = photon_error[time_idx, :]
@@ -269,6 +315,8 @@ def _glue_wavelength_profiles(
         "success_flag": success_flag,
         "fallback_flag": fallback_flag,
         "split_altitude_m": split_altitude_m,
+        "start_altitude_m": start_altitude_m,
+        "stop_altitude_m": stop_altitude_m,
         "slope": slope,
         "intercept": intercept,
         "correlation": correlation,
@@ -444,6 +492,8 @@ def _process_wavelength(
         "gluing_success_flag": gluing["success_flag"],
         "gluing_fallback_flag": gluing["fallback_flag"],
         "gluing_split_altitude_m": gluing["split_altitude_m"],
+        "gluing_start_altitude_m": gluing["start_altitude_m"],
+        "gluing_stop_altitude_m": gluing["stop_altitude_m"],
         "gluing_slope": gluing["slope"],
         "gluing_intercept": gluing["intercept"],
         "gluing_correlation": gluing["correlation"],
@@ -516,6 +566,8 @@ def _build_level2_dataset(
             "gluing_success_flag": (("time", "wavelength"), stack_time("gluing_success_flag").astype(np.int8)),
             "gluing_fallback_flag": (("time", "wavelength"), stack_time("gluing_fallback_flag").astype(np.int8)),
             "gluing_split_altitude_m": (("time", "wavelength"), stack_time("gluing_split_altitude_m")),
+            "gluing_start_altitude_m": (("time", "wavelength"), stack_time("gluing_start_altitude_m")),
+            "gluing_stop_altitude_m": (("time", "wavelength"), stack_time("gluing_stop_altitude_m")),
             "gluing_slope": (("time", "wavelength"), stack_time("gluing_slope")),
             "gluing_intercept": (("time", "wavelength"), stack_time("gluing_intercept")),
             "gluing_correlation": (("time", "wavelength"), stack_time("gluing_correlation")),
@@ -534,6 +586,8 @@ def _build_level2_dataset(
     )
     ds_l2["gluing_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
     ds_l2["gluing_fallback_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used photon_counting_fallback_used"})
+    ds_l2["gluing_start_altitude_m"].attrs.update({"units": "m", "description": "Start altitude of analog/photon-counting fade-in/fade-out gluing window."})
+    ds_l2["gluing_stop_altitude_m"].attrs.update({"units": "m", "description": "Stop altitude of analog/photon-counting fade-in/fade-out gluing window."})
     ds_l2.attrs.update(
         {
             "Processing_level": "Level 2: LEBEAR block and mean optical inversion",
@@ -542,6 +596,7 @@ def _build_level2_dataset(
             "LEBEAR_Mode": "block_and_mean_kfs",
             "KFS_Mode": kfs_mode,
             "KFS_Mode_Description": _kfs_mode_description(kfs_mode),
+            "Gluing_Error_Propagation": "Weighted one-sigma propagation across fade window: sigma² = w_an²(slope sigma_an)² + w_pc² sigma_pc².",
             "Molecular_sources": ";".join(str(result["molecular_source"]) for result in results),
             "Gluing_sources": ";".join(str(result["gluing_source"]) for result in results),
             "Analog_channels": ";".join(str(result["analog_channel"]) for result in results),
