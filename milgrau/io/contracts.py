@@ -73,17 +73,25 @@ def validate_level0_contract(ds: xr.Dataset) -> None:
 
 
 def validate_level1_contract(ds: xr.Dataset) -> None:
-    """Validate the minimum Level 1 structure required by LIRACOS and LEBEAR."""
+    """Validate the minimum Level 1 structure required by LIRACOS and LEBEAR.
+
+    The canonical MILGRAU order for signal tensors is
+    ``(time, channel, altitude)``.  This validator accepts any xarray dimension
+    order as long as the required named dimensions and coordinates are present
+    and all four core signal tensors are mutually conformable after transposing
+    by name.  This keeps older intermediate files readable while downstream code
+    can still transpose explicitly to canonical order before saving.
+    """
     _require_variables(ds, LEVEL1_REQUIRED_VARIABLES, "Level 1 file")
     _require_coords(ds, ("time", "channel", "altitude"), "Level 1 file")
-    expected_dims = ("time", "channel", "altitude")
+    expected_dim_set = {"time", "channel", "altitude"}
+    reference = ds["range_corrected_signal"].transpose("time", "channel", "altitude")
+    reference_shape = reference.shape
     for name in LEVEL1_REQUIRED_VARIABLES:
-        if ds[name].dims != expected_dims:
-            raise ValueError(f"Level 1 {name} must have dimensions {expected_dims}; got {ds[name].dims}.")
-    reference_shape = ds["range_corrected_signal"].shape
-    for name in LEVEL1_REQUIRED_VARIABLES:
-        if ds[name].shape != reference_shape:
-            raise ValueError(f"Level 1 {name} shape does not match range_corrected_signal shape.")
+        if set(ds[name].dims) != expected_dim_set:
+            raise ValueError(f"Level 1 {name} must contain dimensions {tuple(expected_dim_set)}; got {ds[name].dims}.")
+        if ds[name].transpose("time", "channel", "altitude").shape != reference_shape:
+            raise ValueError(f"Level 1 {name} shape does not match range_corrected_signal shape by named dimensions.")
 
 
 def validate_level2_contract(ds: xr.Dataset) -> None:
