@@ -1,8 +1,8 @@
 """LEBEAR Level 2 optical inversion pipeline.
 
 LEBEAR converts Level 1 Range Corrected Signal products into first-pass Level 2
-optical products. This implementation produces both 15-minute block products
-and a full-period mean product, using Analog/Photon Counting gluing, Rayleigh
+optical products. This implementation produces both temporal block products and
+a full-period mean product, using Analog/Photon Counting gluing, Rayleigh
 molecular calibration, and KFS/Fernald-Sasano inversion.
 """
 
@@ -17,7 +17,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from milgrau.io.contracts import validate_level1_contract, validate_level2_contract
 from milgrau.io.filesystem import ensure_directories
+from milgrau.io.paths import LEVEL2_SUFFIX, level2_output_path, processed_data_root
 from milgrau.physics.atmosphere import get_standard_atmosphere
 from milgrau.physics.gluing import slide_glue_signals
 from milgrau.physics.kfs import kfs_inversion_monte_carlo
@@ -30,31 +32,20 @@ from milgrau.physics.molecular import (
 from milgrau.visualization.level2_qa import plot_all_level2_qa
 
 
-LEVEL2_SUFFIX = "_level2_optical.nc"
-REQUIRED_LEVEL1_VARIABLES = (
-    "corrected_signal",
-    "corrected_signal_error",
-    "range_corrected_signal",
-    "range_corrected_signal_error",
-)
+KFS_BRANCH_INVALID = 0
+KFS_BRANCH_BACKWARD_BELOW_REFERENCE = 1
+KFS_BRANCH_REFERENCE_WINDOW = 2
+KFS_BRANCH_FORWARD_ABOVE_REFERENCE_EXPERIMENTAL = 3
+
+
+def _incremental_enabled(config: Mapping[str, Any]) -> bool:
+    """Return whether incremental processing is enabled."""
+    return bool(config.get("processing", {}).get("incremental", False))
 
 
 def discover_level1_files(config: Mapping[str, Any], root_dir: str | Path | None = None) -> list[Path]:
     """Discover Level 1 RCS NetCDF files available for LEBEAR processing."""
-    root_path = Path.cwd() if root_dir is None else Path(root_dir)
-    base_data_folder = root_path / config["directories"]["processed_data"]
-    return sorted(base_data_folder.rglob("*_level1_rcs.nc"))
-
-
-def validate_level1_contract(ds_l1: xr.Dataset) -> None:
-    """Validate the Level 1 variables required by LEBEAR processing."""
-    missing = [name for name in REQUIRED_LEVEL1_VARIABLES if name not in ds_l1]
-    if missing:
-        raise KeyError(f"Level 1 file lacks required variable(s): {missing}")
-    if "altitude" not in ds_l1.coords:
-        raise KeyError("Level 1 file lacks altitude coordinate.")
-    if "channel" not in ds_l1.coords:
-        raise KeyError("Level 1 file lacks channel coordinate.")
+    return sorted(processed_data_root(config, root_dir=root_dir).rglob("*_level1_rcs.nc"))
 
 
 def _get_wavelengths_to_process(config: Mapping[str, Any]) -> list[int]:
@@ -131,9 +122,33 @@ def _get_kfs_mode(config: Mapping[str, Any]) -> str:
     return mode
 
 
+def _kfs_mode_description(mode: str) -> str:
+    """Return a human-readable description of the KFS mode."""
+    if mode == "two_sided":
+        return "Backward below reference and forward above reference; above-reference retrieval is experimental and noise-sensitive."
+    return "Backward Fernald-Sasano retrieval below the reference altitude."
+
+
 def _get_temporal_average_minutes(config: Mapping[str, Any]) -> int:
     """Return the temporal averaging window in minutes for block products."""
     return max(int(config.get("inversion", {}).get("temporal_average_minutes", 15)), 1)
+
+
+def _build_kfs_branch(
+    altitude_m: np.ndarray,
+    ref_start_m: float,
+    ref_stop_m: float,
+    mode: str,
+) -> np.ndarray:
+    """Build per-altitude validity/branch flags for KFS products."""
+    altitude = np.asarray(altitude_m, dtype=np.float64)
+    branch = np.zeros(altitude.size, dtype=np.int8)
+    finite = np.isfinite(altitude)
+    branch[finite & (altitude < ref_start_m)] = KFS_BRANCH_BACKWARD_BELOW_REFERENCE
+    branch[finite & (altitude >= ref_start_m) & (altitude <= ref_stop_m)] = KFS_BRANCH_REFERENCE_WINDOW
+    if mode == "two_sided":
+        branch[finite & (altitude > ref_stop_m)] = KFS_BRANCH_FORWARD_ABOVE_REFERENCE_EXPERIMENTAL
+    return branch
 
 
 def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, str]:
@@ -181,6 +196,7 @@ def _glue_wavelength_profiles(
     glued = np.full((n_time, n_alt), np.nan, dtype=np.float64)
     glued_error = np.full((n_time, n_alt), np.nan, dtype=np.float64)
     success_flag = np.zeros(n_time, dtype=np.int8)
+    fallback_flag = np.zeros(n_time, dtype=np.int8)
     split_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
     slope = np.full(n_time, np.nan, dtype=np.float64)
     intercept = np.full(n_time, np.nan, dtype=np.float64)
@@ -207,28 +223,42 @@ def _glue_wavelength_profiles(
                 minmax_threshold=gluing_cfg["minmax_threshold"],
                 return_diagnostics=True,
             )
-            glued[time_idx, :] = glued_profile
             slope[time_idx] = slope_i
             intercept[time_idx] = intercept_i
             correlation[time_idx] = float(diagnostics.get("best_corr", np.nan))
             if split_point >= 0:
+                glued[time_idx, :] = glued_profile
                 success_flag[time_idx] = 1
                 split_altitude_m[time_idx] = float(altitude_m[split_point])
                 glued_error[time_idx, :split_point] = np.abs(slope_i) * analog_error[time_idx, :split_point]
                 glued_error[time_idx, split_point:] = photon_error[time_idx, split_point:]
-            else:
+            elif gluing_cfg["fallback_to_photon_counting"]:
+                glued[time_idx, :] = photon_signal[time_idx, :]
                 glued_error[time_idx, :] = photon_error[time_idx, :]
+                fallback_flag[time_idx] = 1
+            else:
+                logger.warning(f"  -> {wavelength_nm} nm profile {time_idx}: gluing failed and photon fallback is disabled.")
 
         logger.info(
-            f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% ({analog_ch} + {photon_ch})."
+            f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% "
+            f"({analog_ch} + {photon_ch}); fallback profiles: {int(fallback_flag.sum())}."
         )
         source = "analog_photon_glued"
     else:
         fallback_ch = photon_ch or analog_ch
+        if fallback_ch is None:
+            raise ValueError(f"No usable channel found for wavelength {wavelength_nm} nm.")
+        if photon_ch is not None and analog_ch is None and not gluing_cfg["fallback_to_photon_counting"]:
+            raise ValueError(f"{wavelength_nm} nm has only photon-counting channel {photon_ch}, and photon fallback is disabled.")
         glued[:, :] = signal_da.sel(channel=fallback_ch).values.astype(np.float64)
         glued_error[:, :] = error_da.sel(channel=fallback_ch).values.astype(np.float64)
+        if photon_ch is not None and analog_ch is None:
+            fallback_flag[:] = 1
         source = f"single_channel_{fallback_ch}"
         logger.warning(f"  -> {wavelength_nm} nm using single-channel fallback: {fallback_ch}.")
+
+    if not np.isfinite(glued).any():
+        raise ValueError(f"No finite glued/fallback signal available for wavelength {wavelength_nm} nm.")
 
     return {
         "analog_channel": analog_ch,
@@ -237,6 +267,7 @@ def _glue_wavelength_profiles(
         "glued": glued,
         "glued_error": glued_error,
         "success_flag": success_flag,
+        "fallback_flag": fallback_flag,
         "split_altitude_m": split_altitude_m,
         "slope": slope,
         "intercept": intercept,
@@ -297,7 +328,7 @@ def _run_kfs_profile(
         min_lidar_ratio=float(inv_cfg.get("min_lidar_ratio_sr", 10.0)),
         allow_negative_aerosol=bool(inv_cfg.get("allow_negative_aerosol", False)),
         seed=inv_cfg.get("random_seed"),
-        mode=str(inv_cfg.get("kfs_mode", "two_sided")),
+        mode=_get_kfs_mode(config),
     )
 
 
@@ -313,7 +344,8 @@ def _process_wavelength(
     pressure_hpa, temperature_k, molecular_source = _build_thermodynamic_profile(ds_l1, altitude_m, config)
     beta_mol, alpha_mol = calculate_molecular_profile(temperature_k, pressure_hpa, wavelength_nm)
     simulated_signal, molecular_transmission = calculate_simulated_molecular_signal(beta_mol, alpha_mol, altitude_m)
-    safe_altitude = np.where(altitude_m > 0.0, altitude_m, altitude_m[altitude_m > 0.0][0])
+    positive_altitudes = altitude_m[altitude_m > 0.0]
+    safe_altitude = np.where(altitude_m > 0.0, altitude_m, positive_altitudes[0] if positive_altitudes.size else 1.0)
     simulated_molecular_rcs = simulated_signal * safe_altitude**2
 
     glued = gluing["glued"]  # type: ignore[assignment]
@@ -376,6 +408,7 @@ def _process_wavelength(
         alpha_block.append(a_mean)
         alpha_block_std.append(a_std)
 
+    kfs_mode = _get_kfs_mode(config)
     return {
         "wavelength": wavelength_nm,
         "block_time": block_time,
@@ -407,7 +440,9 @@ def _process_wavelength(
         "rayleigh_calibration_factor": calibration_factor,
         "lidar_ratio_assumed_sr": lr_base,
         "lidar_ratio_std_sr": lr_std,
+        "kfs_branch": _build_kfs_branch(altitude_m, ref_start_m, ref_stop_m, kfs_mode),
         "gluing_success_flag": gluing["success_flag"],
+        "gluing_fallback_flag": gluing["fallback_flag"],
         "gluing_split_altitude_m": gluing["split_altitude_m"],
         "gluing_slope": gluing["slope"],
         "gluing_intercept": gluing["intercept"],
@@ -418,7 +453,13 @@ def _process_wavelength(
     }
 
 
-def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], altitude_m: np.ndarray, source_file: Path) -> xr.Dataset:
+def _build_level2_dataset(
+    ds_l1: xr.Dataset,
+    results: list[dict[str, Any]],
+    altitude_m: np.ndarray,
+    source_file: Path,
+    config: Mapping[str, Any],
+) -> xr.Dataset:
     """Build an xarray Level 2 dataset from wavelength processing results."""
     wavelengths = np.asarray([result["wavelength"] for result in results], dtype=np.int32)
     time_values = ds_l1["time"].values
@@ -437,6 +478,7 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
     def vector(name: str) -> np.ndarray:
         return np.asarray([result[name] for result in results], dtype=np.float64)
 
+    kfs_mode = _get_kfs_mode(config)
     ds_l2 = xr.Dataset(
         data_vars={
             "molecular_backscatter": (("wavelength", "altitude"), stack("molecular_backscatter")),
@@ -470,7 +512,9 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "rayleigh_calibration_factor": (("wavelength",), vector("rayleigh_calibration_factor")),
             "lidar_ratio_assumed_sr": (("wavelength",), vector("lidar_ratio_assumed_sr")),
             "lidar_ratio_std_sr": (("wavelength",), vector("lidar_ratio_std_sr")),
+            "kfs_branch": (("wavelength", "altitude"), stack("kfs_branch").astype(np.int8)),
             "gluing_success_flag": (("time", "wavelength"), stack_time("gluing_success_flag").astype(np.int8)),
+            "gluing_fallback_flag": (("time", "wavelength"), stack_time("gluing_fallback_flag").astype(np.int8)),
             "gluing_split_altitude_m": (("time", "wavelength"), stack_time("gluing_split_altitude_m")),
             "gluing_slope": (("time", "wavelength"), stack_time("gluing_slope")),
             "gluing_intercept": (("time", "wavelength"), stack_time("gluing_intercept")),
@@ -481,13 +525,23 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
     )
     ds_l2["altitude"].attrs.update({"units": "m", "long_name": "Altitude above station"})
     ds_l2["wavelength"].attrs.update({"units": "nm"})
+    ds_l2["kfs_branch"].attrs.update(
+        {
+            "flag_values": "0, 1, 2, 3",
+            "flag_meanings": "invalid backward_below_reference reference_window forward_above_reference_experimental",
+            "description": "KFS/Fernald-Sasano retrieval branch by altitude. Above-reference two-sided retrieval is experimental and noise-sensitive.",
+        }
+    )
+    ds_l2["gluing_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
+    ds_l2["gluing_fallback_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used photon_counting_fallback_used"})
     ds_l2.attrs.update(
         {
             "Processing_level": "Level 2: LEBEAR block and mean optical inversion",
             "Pipeline": "MILGRAU/LEBEAR",
             "Input_Level1_File": source_file.name,
             "LEBEAR_Mode": "block_and_mean_kfs",
-            "KFS_Mode": "configured",
+            "KFS_Mode": kfs_mode,
+            "KFS_Mode_Description": _kfs_mode_description(kfs_mode),
             "Molecular_sources": ";".join(str(result["molecular_source"]) for result in results),
             "Gluing_sources": ";".join(str(result["gluing_source"]) for result in results),
             "Analog_channels": ";".join(str(result["analog_channel"]) for result in results),
@@ -495,12 +549,6 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
         }
     )
     return ds_l2
-
-
-def _level2_output_path(nc_file: Path, config: Mapping[str, Any]) -> Path:
-    """Return the Level 2 output path for one Level 1 file."""
-    stem = nc_file.name.replace("_level1_rcs.nc", "")
-    return nc_file.parent / f"{stem}{LEVEL2_SUFFIX}"
 
 
 def process_single_level1_file(nc_file: str | Path, config: Mapping[str, Any], logger: logging.Logger) -> str:
@@ -522,9 +570,10 @@ def process_single_level1_file(nc_file: str | Path, config: Mapping[str, Any], l
                     logger.warning(f"  -> Skipping {wavelength} nm in {nc_path.name}: {exc}")
             if not results:
                 raise RuntimeError("No wavelength could be processed by LEBEAR.")
-            ds_l2 = _build_level2_dataset(ds_l1, results, altitude_m, nc_path)
+            ds_l2 = _build_level2_dataset(ds_l1, results, altitude_m, nc_path, config)
+            validate_level2_contract(ds_l2)
 
-        output_path = _level2_output_path(nc_path, config)
+        output_path = level2_output_path(nc_path)
         ensure_directories(output_path.parent)
         encoding = {var: {"zlib": True, "complevel": 4} for var in ds_l2.data_vars if ds_l2[var].ndim > 0}
         ds_l2.to_netcdf(output_path, encoding=encoding)
@@ -556,6 +605,22 @@ def process_level_2(config: Mapping[str, Any], logger: logging.Logger) -> None:
     if not files:
         logger.warning("No Level 1 files found for LEBEAR processing.")
         return
-    logger.info(f"Found {len(files)} Level 1 files for LEBEAR.")
+
+    incremental = _incremental_enabled(config)
+    files_to_process = []
+    skipped_count = 0
     for file_path in files:
+        output_path = level2_output_path(file_path)
+        if incremental and output_path.exists():
+            logger.info(f"[SKIPPED] Level 2 already exists for {file_path.name}: {output_path}")
+            skipped_count += 1
+            continue
+        files_to_process.append(file_path)
+
+    if not files_to_process:
+        logger.info(f"No Level 1 files require Level 2 processing. Skipped {skipped_count} existing products.")
+        return
+
+    logger.info(f"Found {len(files_to_process)} Level 1 files for LEBEAR ({skipped_count} skipped).")
+    for file_path in files_to_process:
         logger.info(process_single_level1_file(file_path, config, logger))
