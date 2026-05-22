@@ -22,6 +22,32 @@ def _prepare_altitude_m(altitude: np.ndarray, altitude_units: Literal["auto", "m
     raise ValueError("altitude_units must be 'auto', 'm', or 'km'.")
 
 
+def _nanmean_nanstd_no_warning(values: np.ndarray, axis: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Return NaN-safe mean and standard deviation without empty-slice warnings.
+
+    ``np.nanmean`` and ``np.nanstd`` intentionally warn when a full reduction
+    slice is NaN. In KFS this is an expected scientific outcome for altitude
+    bins where the inversion is invalid, so we return NaN quietly for those
+    bins and keep finite statistics elsewhere.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    finite = np.isfinite(arr)
+    count = finite.sum(axis=axis)
+    safe_values = np.where(finite, arr, 0.0)
+    summed = safe_values.sum(axis=axis)
+
+    mean = np.full(count.shape, np.nan, dtype=np.float64)
+    valid = count > 0
+    mean[valid] = summed[valid] / count[valid]
+
+    expanded_mean = np.expand_dims(mean, axis=axis)
+    squared = np.where(finite, (arr - expanded_mean) ** 2, 0.0)
+    variance_sum = squared.sum(axis=axis)
+    std = np.full(count.shape, np.nan, dtype=np.float64)
+    std[valid] = np.sqrt(variance_sum[valid] / count[valid])
+    return mean, std
+
+
 @njit
 def _fernald_single_profile(
     rcs: np.ndarray,
@@ -246,17 +272,13 @@ def kfs_inversion_monte_carlo(
         rcs_error_arr = np.ascontiguousarray(rcs_error, dtype=np.float64)
         if rcs_error_arr.shape[0] != n_bins:
             raise ValueError("rcs_error must have the same length as rcs.")
-        rcs_error_arr = np.ascontiguousarray(
-            np.where(np.isfinite(rcs_error_arr), rcs_error_arr, 0.0), dtype=np.float64
-        )
+        rcs_error_arr = np.ascontiguousarray(np.where(np.isfinite(rcs_error_arr), rcs_error_arr, 0.0), dtype=np.float64)
     else:
         rcs_error_arr = np.zeros_like(rcs_arr, dtype=np.float64)
 
     rng = np.random.default_rng(seed)
     n_iterations = int(n_iterations)
-    lr_samples = np.ascontiguousarray(
-        rng.normal(float(lr_base), float(lr_std), size=n_iterations), dtype=np.float64
-    )
+    lr_samples = np.ascontiguousarray(rng.normal(float(lr_base), float(lr_std), size=n_iterations), dtype=np.float64)
 
     beta_total_ref_mean = beta_mol_arr[ref_idx] * (1.0 + float(aerosol_ref_fraction))
     beta_total_ref_samples = np.ascontiguousarray(
@@ -289,11 +311,8 @@ def kfs_inversion_monte_carlo(
         mode_code,
     )
 
-    with np.errstate(all="ignore"):
-        beta_mean = np.nanmean(beta_sims, axis=0)
-        beta_std = np.nanstd(beta_sims, axis=0)
-        alpha_mean = np.nanmean(alpha_sims, axis=0)
-        alpha_std = np.nanstd(alpha_sims, axis=0)
+    beta_mean, beta_std = _nanmean_nanstd_no_warning(beta_sims, axis=0)
+    alpha_mean, alpha_std = _nanmean_nanstd_no_warning(alpha_sims, axis=0)
 
     if return_diagnostics:
         diagnostics = {
