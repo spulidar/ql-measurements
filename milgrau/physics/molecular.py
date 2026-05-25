@@ -10,8 +10,6 @@ from scipy.integrate import cumulative_trapezoid
 from milgrau.physics.constants import BOLTZMANN_CONSTANT_J_K, RAYLEIGH_LIDAR_RATIO_SR
 
 # Practical Rayleigh scattering cross-section near 550 nm in m².
-# The previous 5.45e-28 value produced molecular extinction/backscatter roughly
-# three orders of magnitude too high for atmospheric lidar applications.
 RAYLEIGH_CROSS_SECTION_550_M2 = 5.45e-31
 
 
@@ -30,8 +28,12 @@ def calculate_molecular_profile(
     if wavelength_nm <= 0.0 or not np.isfinite(wavelength_nm):
         raise ValueError(f"Invalid wavelength_nm: {wavelength_nm}")
 
-    temp_safe = np.where((temp_profile > 0.0) & np.isfinite(temp_profile), temp_profile, np.nan)
-    press_safe = np.where((press_profile > 0.0) & np.isfinite(press_profile), press_profile, np.nan)
+    temp_safe = np.where(
+        (temp_profile > 0.0) & np.isfinite(temp_profile), temp_profile, np.nan
+    )
+    press_safe = np.where(
+        (press_profile > 0.0) & np.isfinite(press_profile), press_profile, np.nan
+    )
     press_pa = press_safe * 100.0
     n_density = press_pa / (BOLTZMANN_CONSTANT_J_K * temp_safe)
 
@@ -41,7 +43,9 @@ def calculate_molecular_profile(
     return beta_mol.astype(np.float64), alpha_mol.astype(np.float64)
 
 
-def calculate_molecular_two_way_transmission(alpha_mol: np.ndarray, altitude_m: np.ndarray) -> np.ndarray:
+def calculate_molecular_two_way_transmission(
+    alpha_mol: np.ndarray, altitude_m: np.ndarray
+) -> np.ndarray:
     """Calculate molecular two-way transmission from extinction.
 
     The returned factor is ``exp(-2 * integral(alpha_mol dz))`` and is used to
@@ -50,7 +54,9 @@ def calculate_molecular_two_way_transmission(alpha_mol: np.ndarray, altitude_m: 
     alpha = np.asarray(alpha_mol, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
     if alpha.ndim != 1 or altitude.ndim != 1 or alpha.size != altitude.size:
-        raise ValueError("alpha_mol and altitude_m must be 1D arrays with the same length.")
+        raise ValueError(
+            "alpha_mol and altitude_m must be 1D arrays with the same length."
+        )
 
     valid_alpha = np.where(np.isfinite(alpha) & (alpha >= 0.0), alpha, 0.0)
     optical_depth = cumulative_trapezoid(valid_alpha, altitude, initial=0.0)
@@ -72,11 +78,15 @@ def calculate_simulated_molecular_signal(
     beta = np.asarray(beta_mol, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
     if beta.ndim != 1 or altitude.ndim != 1 or beta.size != altitude.size:
-        raise ValueError("beta_mol and altitude_m must be 1D arrays with the same length.")
+        raise ValueError(
+            "beta_mol and altitude_m must be 1D arrays with the same length."
+        )
 
     transmission = calculate_molecular_two_way_transmission(alpha_mol, altitude)
     positive_altitudes = altitude[altitude > 0.0]
-    min_positive_altitude = float(positive_altitudes[0]) if positive_altitudes.size else 1.0
+    min_positive_altitude = (
+        float(positive_altitudes[0]) if positive_altitudes.size else 1.0
+    )
     safe_altitude = np.where(altitude > 0.0, altitude, min_positive_altitude)
     simulated_signal = beta * transmission / (safe_altitude**2)
     return simulated_signal.astype(np.float64), transmission
@@ -98,9 +108,13 @@ def robust_rayleigh_calibration_factor(
     simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
     if not (measured.ndim == simulated.ndim == altitude.ndim == 1):
-        raise ValueError("measured_signal, simulated_molecular_signal and altitude_m must be 1D arrays.")
+        raise ValueError(
+            "measured_signal, simulated_molecular_signal and altitude_m must be 1D arrays."
+        )
     if not (measured.size == simulated.size == altitude.size):
-        raise ValueError("measured_signal, simulated_molecular_signal and altitude_m must have the same length.")
+        raise ValueError(
+            "measured_signal, simulated_molecular_signal and altitude_m must have the same length."
+        )
 
     center = int(reference_center_idx)
     half_window = max(int(reference_window_bins) // 2, 1)
@@ -181,7 +195,9 @@ def find_optimal_reference_altitude(
 
         window_ratio = ratio[start_idx:end_idx]
         window_alt = altitude[start_idx:end_idx]
-        valid = np.isfinite(window_ratio) & np.isfinite(window_alt) & (window_ratio > 0.0)
+        valid = (
+            np.isfinite(window_ratio) & np.isfinite(window_alt) & (window_ratio > 0.0)
+        )
         if valid.sum() < max(3, window_size // 2):
             continue
 
