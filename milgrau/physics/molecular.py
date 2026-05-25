@@ -1,4 +1,11 @@
-"""Molecular/Rayleigh calculations for lidar inversion."""
+"""Molecular/Rayleigh calculations for elastic lidar inversion.
+
+The molecular profile is calculated from pressure and temperature using
+Bucholtz-style Rayleigh scattering.  The returned molecular backscatter is the
+angular volume-scattering coefficient at 180 degrees, appropriate for elastic
+backscatter lidar, while molecular extinction is the total Rayleigh volume
+scattering coefficient.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +14,133 @@ from typing import Literal
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
-from milgrau.physics.constants import BOLTZMANN_CONSTANT_J_K, RAYLEIGH_LIDAR_RATIO_SR
+from milgrau.physics.constants import RAYLEIGH_LIDAR_RATIO_SR
 
-# Practical Rayleigh scattering cross-section near 550 nm in m².
-RAYLEIGH_CROSS_SECTION_550_M2 = 5.45e-31
+_STANDARD_NUMBER_DENSITY_CM3 = 2.54743e19
+_STANDARD_PRESSURE_HPA = 1013.25
+_STANDARD_TEMPERATURE_K = 288.15
+
+
+def depolarization_factor(wavelength_nm: float | np.ndarray) -> np.ndarray:
+    """Return the wavelength-dependent molecular depolarization factor.
+
+    The tabulated values follow the Bates values used by Bucholtz for standard
+    dry air.  The factor controls both the King correction and the Rayleigh phase
+    function, therefore it directly affects molecular backscatter at 180 degrees.
+    """
+    wavelength_reference_um = np.concatenate(
+        (
+            np.arange(0.2, 0.231, 0.005),
+            np.arange(0.24, 0.401, 0.01),
+            np.arange(0.45, 1.01, 0.05),
+        )
+    )
+    wavelength_reference_nm = wavelength_reference_um * 1000.0
+    depol_reference = np.array(
+        [
+            4.545,
+            4.384,
+            4.221,
+            4.113,
+            4.004,
+            3.895,
+            3.785,
+            3.675,
+            3.565,
+            3.455,
+            3.4,
+            3.289,
+            3.233,
+            3.178,
+            3.178,
+            3.122,
+            3.066,
+            3.066,
+            3.01,
+            3.01,
+            3.01,
+            2.955,
+            2.955,
+            2.955,
+            2.899,
+            2.842,
+            2.842,
+            2.786,
+            2.786,
+            2.786,
+            2.786,
+            2.73,
+            2.73,
+            2.73,
+            2.73,
+            2.73,
+        ],
+        dtype=np.float64,
+    ) * 1e-2
+    return np.interp(wavelength_nm, wavelength_reference_nm, depol_reference)
+
+
+def refractive_index_standard_air(wavelength_nm: float | np.ndarray) -> np.ndarray:
+    """Return refractive index of standard air for the lidar wavelength."""
+    wavelength_um = np.asarray(wavelength_nm, dtype=np.float64) * 1e-3
+    n_minus_one = np.where(
+        wavelength_um > 0.23,
+        (5791817.0 / (238.0185 - (1.0 / wavelength_um) ** 2))
+        + (167909.0 / (57.362 - (1.0 / wavelength_um) ** 2)),
+        8060.51
+        + (2480990.0 / (132.274 - (1.0 / wavelength_um) ** 2))
+        + (17455.7 / (39.32957 - (1.0 / wavelength_um) ** 2)),
+    )
+    return n_minus_one * 1e-8 + 1.0
+
+
+def king_correction_factor(wavelength_nm: float | np.ndarray) -> np.ndarray:
+    """Return the King correction factor for molecular anisotropy."""
+    rho_n = depolarization_factor(wavelength_nm)
+    return (6.0 + 3.0 * rho_n) / (6.0 - 7.0 * rho_n)
+
+
+def scattering_cross_section_bucholtz(wavelength_nm: float | np.ndarray) -> np.ndarray:
+    """Return the total Rayleigh cross section per molecule in cm²."""
+    wavelength_nm = np.asarray(wavelength_nm, dtype=np.float64)
+    wavelength_cm = wavelength_nm * 1e-7
+    n_s = refractive_index_standard_air(wavelength_nm)
+    f_king = king_correction_factor(wavelength_nm)
+    numerator = 24.0 * np.pi**3 * (n_s**2 - 1.0) ** 2
+    denominator = wavelength_cm**4 * _STANDARD_NUMBER_DENSITY_CM3**2 * (n_s**2 + 2.0) ** 2
+    return numerator * f_king / denominator
+
+
+def rayleigh_phase_function(scattering_angle_rad: float, wavelength_nm: float | np.ndarray) -> np.ndarray:
+    """Return the Rayleigh phase function for unpolarized light."""
+    rho_n = depolarization_factor(wavelength_nm)
+    gamma = rho_n / (2.0 - rho_n)
+    return 3.0 * ((1.0 + 3.0 * gamma) + (1.0 - gamma) * np.cos(scattering_angle_rad) ** 2) / (4.0 * (1.0 + 2.0 * gamma))
+
+
+def volume_scattering_coefficient_bucholtz(
+    wavelength_nm: float,
+    pressure_hpa: np.ndarray,
+    temperature_k: np.ndarray,
+) -> np.ndarray:
+    """Return total molecular extinction/Rayleigh volume scattering in m⁻¹."""
+    pressure = np.asarray(pressure_hpa, dtype=np.float64)
+    temperature = np.asarray(temperature_k, dtype=np.float64)
+    sigma_cm2 = scattering_cross_section_bucholtz(float(wavelength_nm))
+    beta_cm1 = _STANDARD_NUMBER_DENSITY_CM3 * sigma_cm2 * pressure * _STANDARD_TEMPERATURE_K / (_STANDARD_PRESSURE_HPA * temperature)
+    return beta_cm1 * 100.0
+
+
+def angular_volume_scattering_coefficient_bucholtz(
+    wavelength_nm: float,
+    pressure_hpa: np.ndarray,
+    temperature_k: np.ndarray,
+    scattering_angle_rad: float = np.pi,
+) -> np.ndarray:
+    """Return molecular angular backscatter coefficient in m⁻¹ sr⁻¹."""
+    alpha_mol = volume_scattering_coefficient_bucholtz(wavelength_nm, pressure_hpa, temperature_k)
+    phase = rayleigh_phase_function(scattering_angle_rad, float(wavelength_nm))
+    return alpha_mol * phase / (4.0 * np.pi)
 
 
 def calculate_molecular_profile(
@@ -18,7 +148,12 @@ def calculate_molecular_profile(
     press_profile: np.ndarray,
     wavelength_nm: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Calculate molecular backscatter and extinction profiles."""
+    """Calculate molecular backscatter and extinction profiles.
+
+    Pressure is expected in hPa and temperature in K.  Invalid or non-positive
+    thermodynamic values are masked as NaN to avoid generating artificial
+    molecular structure in the optical inversion.
+    """
     temp_profile = np.asarray(temp_profile, dtype=np.float64)
     press_profile = np.asarray(press_profile, dtype=np.float64)
     wavelength_nm = float(wavelength_nm)
@@ -28,35 +163,19 @@ def calculate_molecular_profile(
     if wavelength_nm <= 0.0 or not np.isfinite(wavelength_nm):
         raise ValueError(f"Invalid wavelength_nm: {wavelength_nm}")
 
-    temp_safe = np.where(
-        (temp_profile > 0.0) & np.isfinite(temp_profile), temp_profile, np.nan
-    )
-    press_safe = np.where(
-        (press_profile > 0.0) & np.isfinite(press_profile), press_profile, np.nan
-    )
-    press_pa = press_safe * 100.0
-    n_density = press_pa / (BOLTZMANN_CONSTANT_J_K * temp_safe)
-
-    sigma = RAYLEIGH_CROSS_SECTION_550_M2 * ((550.0 / wavelength_nm) ** 4)
-    alpha_mol = n_density * sigma
-    beta_mol = alpha_mol / RAYLEIGH_LIDAR_RATIO_SR
+    temp_safe = np.where((temp_profile > 0.0) & np.isfinite(temp_profile), temp_profile, np.nan)
+    press_safe = np.where((press_profile > 0.0) & np.isfinite(press_profile), press_profile, np.nan)
+    alpha_mol = volume_scattering_coefficient_bucholtz(wavelength_nm, press_safe, temp_safe)
+    beta_mol = angular_volume_scattering_coefficient_bucholtz(wavelength_nm, press_safe, temp_safe, np.pi)
     return beta_mol.astype(np.float64), alpha_mol.astype(np.float64)
 
 
-def calculate_molecular_two_way_transmission(
-    alpha_mol: np.ndarray, altitude_m: np.ndarray
-) -> np.ndarray:
-    """Calculate molecular two-way transmission from extinction.
-
-    The returned factor is ``exp(-2 * integral(alpha_mol dz))`` and is used to
-    build a physically consistent molecular elastic signal for Rayleigh fitting.
-    """
+def calculate_molecular_two_way_transmission(alpha_mol: np.ndarray, altitude_m: np.ndarray) -> np.ndarray:
+    """Calculate molecular two-way transmission from extinction."""
     alpha = np.asarray(alpha_mol, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
     if alpha.ndim != 1 or altitude.ndim != 1 or alpha.size != altitude.size:
-        raise ValueError(
-            "alpha_mol and altitude_m must be 1D arrays with the same length."
-        )
+        raise ValueError("alpha_mol and altitude_m must be 1D arrays with the same length.")
 
     valid_alpha = np.where(np.isfinite(alpha) & (alpha >= 0.0), alpha, 0.0)
     optical_depth = cumulative_trapezoid(valid_alpha, altitude, initial=0.0)
@@ -64,32 +183,48 @@ def calculate_molecular_two_way_transmission(
     return np.clip(transmission, 0.0, 1.0).astype(np.float64)
 
 
-def calculate_simulated_molecular_signal(
-    beta_mol: np.ndarray,
-    alpha_mol: np.ndarray,
-    altitude_m: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Calculate a molecular elastic lidar signal shape.
-
-    The simulated molecular signal is proportional to
-    ``beta_mol(z) * T_mol(z)^2 / z^2``. The first range bin is protected from
-    division by zero using the first positive altitude step.
-    """
+def calculate_simulated_molecular_signal(beta_mol: np.ndarray, alpha_mol: np.ndarray, altitude_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Calculate a molecular elastic lidar signal shape."""
     beta = np.asarray(beta_mol, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
     if beta.ndim != 1 or altitude.ndim != 1 or beta.size != altitude.size:
-        raise ValueError(
-            "beta_mol and altitude_m must be 1D arrays with the same length."
-        )
+        raise ValueError("beta_mol and altitude_m must be 1D arrays with the same length.")
 
     transmission = calculate_molecular_two_way_transmission(alpha_mol, altitude)
     positive_altitudes = altitude[altitude > 0.0]
-    min_positive_altitude = (
-        float(positive_altitudes[0]) if positive_altitudes.size else 1.0
-    )
+    min_positive_altitude = float(positive_altitudes[0]) if positive_altitudes.size else 1.0
     safe_altitude = np.where(altitude > 0.0, altitude, min_positive_altitude)
     simulated_signal = beta * transmission / (safe_altitude**2)
     return simulated_signal.astype(np.float64), transmission
+
+
+def linear_rayleigh_calibration_factor(
+    measured_signal: np.ndarray,
+    simulated_molecular_signal: np.ndarray,
+    altitude_m: np.ndarray,
+    reference_center_idx: int,
+    reference_window_bins: int,
+) -> tuple[float, float, float, float, int]:
+    """Fit measured signal as a linear function of molecular signal.
+
+    The slope scales the molecular signal onto the lidar signal.  The intercept
+    is retained as a diagnostic because a large intercept indicates incomplete
+    background correction or contamination in the Rayleigh reference interval.
+    """
+    measured = np.asarray(measured_signal, dtype=np.float64)
+    simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
+    altitude = np.asarray(altitude_m, dtype=np.float64)
+    center = int(reference_center_idx)
+    half_window = max(int(reference_window_bins) // 2, 1)
+    start = max(center - half_window, 0)
+    stop = min(center + half_window + 1, measured.size)
+    x = simulated[start:stop]
+    y = measured[start:stop]
+    valid = np.isfinite(x) & np.isfinite(y) & (x > 0.0) & (y > 0.0)
+    if valid.sum() < 2:
+        return np.nan, np.nan, float(altitude[start]), float(altitude[stop - 1]), int(valid.sum())
+    slope, intercept = np.polyfit(x[valid], y[valid], 1)
+    return float(slope), float(intercept), float(altitude[start]), float(altitude[stop - 1]), int(valid.sum())
 
 
 def robust_rayleigh_calibration_factor(
@@ -99,22 +234,14 @@ def robust_rayleigh_calibration_factor(
     reference_center_idx: int,
     reference_window_bins: int,
 ) -> tuple[float, float, float, int]:
-    """Estimate Rayleigh calibration factor using a robust reference window.
-
-    Returns the median measured/simulated ratio in the reference window, the
-    start and stop altitudes of that window, and the number of valid bins used.
-    """
+    """Estimate Rayleigh calibration factor using a robust reference window."""
     measured = np.asarray(measured_signal, dtype=np.float64)
     simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
     if not (measured.ndim == simulated.ndim == altitude.ndim == 1):
-        raise ValueError(
-            "measured_signal, simulated_molecular_signal and altitude_m must be 1D arrays."
-        )
+        raise ValueError("measured_signal, simulated_molecular_signal and altitude_m must be 1D arrays.")
     if not (measured.size == simulated.size == altitude.size):
-        raise ValueError(
-            "measured_signal, simulated_molecular_signal and altitude_m must have the same length."
-        )
+        raise ValueError("measured_signal, simulated_molecular_signal and altitude_m must have the same length.")
 
     center = int(reference_center_idx)
     half_window = max(int(reference_window_bins) // 2, 1)
@@ -166,12 +293,7 @@ def find_optimal_reference_altitude(
     """Find the best Rayleigh calibration altitude window."""
     rcs = np.asarray(rcs, dtype=np.float64)
     beta_mol = np.asarray(beta_mol, dtype=np.float64)
-    altitude, min_alt, max_alt = _resolve_altitude_search_units(
-        altitude,
-        min_alt,
-        max_alt,
-        altitude_units=altitude_units,
-    )
+    altitude, min_alt, max_alt = _resolve_altitude_search_units(altitude, min_alt, max_alt, altitude_units=altitude_units)
 
     if rcs.ndim != 1 or beta_mol.ndim != 1 or altitude.ndim != 1:
         raise ValueError("rcs, beta_mol and altitude must be 1D arrays.")
@@ -195,9 +317,7 @@ def find_optimal_reference_altitude(
 
         window_ratio = ratio[start_idx:end_idx]
         window_alt = altitude[start_idx:end_idx]
-        valid = (
-            np.isfinite(window_ratio) & np.isfinite(window_alt) & (window_ratio > 0.0)
-        )
+        valid = np.isfinite(window_ratio) & np.isfinite(window_alt) & (window_ratio > 0.0)
         if valid.sum() < max(3, window_size // 2):
             continue
 
@@ -209,8 +329,9 @@ def find_optimal_reference_altitude(
 
         rel_var = np.var(wr) / (mean_ratio**2)
         slope, _ = np.polyfit(wa, wr, 1)
-        rel_slope = abs(slope) / mean_ratio
-        cost = rel_var + (rel_slope * 5.0)
+        altitude_span = max(float(np.nanmax(wa) - np.nanmin(wa)), 1.0)
+        rel_slope = abs(slope) * altitude_span / mean_ratio
+        cost = rel_var + rel_slope
         if cost < min_cost:
             min_cost = cost
             best_idx = start_idx + (window_size // 2)
