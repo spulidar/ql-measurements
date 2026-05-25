@@ -20,6 +20,7 @@ processing:
   delete_spurious_files: false
   spurious_extensions: [".dpp", ".zip", ".txt"]
   quarantine_dir: "01-data/_quarantine"
+  raw_scan_ignore_dirs: ["openmeteo_cache", "wyoming_cache"]
   max_workers_io: 1
   max_workers_cpu: 1
 
@@ -121,8 +122,10 @@ visualization:
   level2_qa:
     enabled: true
     max_altitude_km: 30.0
+    smooth_bins: 15
     generate_gluing_qa: true
     generate_molecular_fit_qa: true
+    generate_scattering_ratio_qa: true
     generate_kfs_qa: true
 
 inversion:
@@ -134,6 +137,7 @@ inversion:
   products:
     save_glued_signal: true
     save_molecular_profile: true
+    save_scattering_ratio: true
     save_aerosol_backscatter: true
     save_aerosol_extinction: true
     save_uncertainty: true
@@ -146,23 +150,23 @@ inversion:
   allow_negative_aerosol: false
 
   molecular_fit:
-    ref_alt_min_m: 15000.0
-    ref_alt_max_m: 22000.0
-    ref_window_bins: 100
+    ref_alt_min_m: 5000.0
+    ref_alt_max_m: 25000.0
+    ref_window_bins: 2667
     lidar_ratio_molecular_sr: 8.377580409572781
-    max_relative_slope: 0.05
-    max_relative_variance: 0.10
+    max_relative_slope: 0.25
+    max_relative_variance: 0.50
     min_valid_fraction: 0.50
 
   gluing:
     enabled: true
-    window_length_bins: 120
-    correlation_threshold: 0.90
-    intercept_threshold: 5.0
-    gaussian_threshold: 2.0
-    minmax_threshold: 2.0
-    search_min_idx: 80
-    search_max_idx: 500
+    window_length_bins: 150
+    correlation_threshold: 0.95
+    intercept_threshold: 0.5
+    gaussian_threshold: 0.1
+    minmax_threshold: 0.5
+    search_min_idx: 200
+    search_max_idx: 2000
     fallback_to_photon_counting: true
 
   cloud_screening:
