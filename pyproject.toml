@@ -22,10 +22,13 @@ dependencies = [
   "scipy>=1.10.0",
   "numba>=0.58.0",
   "matplotlib>=3.7.0",
-  "boto3>=1.26.0",
   "siphon",
-  "tenacity>=8.2.0",
   "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
 ]
 
 [project.scripts]
