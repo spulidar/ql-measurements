@@ -126,8 +126,6 @@ For users who only want to run the program:
 pip install .
 ```
 
-MILGRAU uses `pyproject.toml` as the single source for package metadata and runtime dependencies. A separate `requirements.txt` file is not needed for normal installation.
-
 ### Developer mode
 
 Use this option if you are going to edit the MILGRAU source code:
