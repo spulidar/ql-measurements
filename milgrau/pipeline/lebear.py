@@ -27,7 +27,7 @@ from milgrau.physics.molecular import (
     calculate_molecular_profile,
     calculate_simulated_molecular_signal,
     find_optimal_reference_altitude,
-    robust_rayleigh_calibration_factor,
+    linear_rayleigh_calibration_factor,
 )
 from milgrau.visualization.level2_qa import plot_all_level2_qa
 
@@ -93,13 +93,13 @@ def _get_gluing_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """Return gluing configuration with safe defaults."""
     gluing_cfg = config.get("inversion", {}).get("gluing", {}) or {}
     return {
-        "window_size": int(gluing_cfg.get("window_length_bins", 120)),
-        "min_corr": float(gluing_cfg.get("correlation_threshold", 0.90)),
-        "search_min_idx": int(gluing_cfg.get("search_min_idx", 80)),
-        "search_max_idx": int(gluing_cfg.get("search_max_idx", 500)),
-        "intercept_threshold": float(gluing_cfg.get("intercept_threshold", 5.0)),
-        "gaussian_threshold": float(gluing_cfg.get("gaussian_threshold", 2.0)),
-        "minmax_threshold": float(gluing_cfg.get("minmax_threshold", 2.0)),
+        "window_size": int(gluing_cfg.get("window_length_bins", 150)),
+        "min_corr": float(gluing_cfg.get("correlation_threshold", 0.95)),
+        "search_min_idx": int(gluing_cfg.get("search_min_idx", 200)),
+        "search_max_idx": int(gluing_cfg.get("search_max_idx", 2000)),
+        "intercept_threshold": float(gluing_cfg.get("intercept_threshold", 0.5)),
+        "gaussian_threshold": float(gluing_cfg.get("gaussian_threshold", 0.1)),
+        "minmax_threshold": float(gluing_cfg.get("minmax_threshold", 0.5)),
         "fallback_to_photon_counting": bool(gluing_cfg.get("fallback_to_photon_counting", True)),
     }
 
@@ -108,11 +108,11 @@ def _get_molecular_fit_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """Return molecular reference configuration with safe defaults."""
     fit_cfg = config.get("inversion", {}).get("molecular_fit", {}) or {}
     return {
-        "ref_alt_min_m": float(fit_cfg.get("ref_alt_min_m", 22000.0)),
-        "ref_alt_max_m": float(fit_cfg.get("ref_alt_max_m", 28000.0)),
-        "ref_window_bins": int(fit_cfg.get("ref_window_bins", 100)),
-        "max_relative_slope": float(fit_cfg.get("max_relative_slope", 0.05)),
-        "max_relative_variance": float(fit_cfg.get("max_relative_variance", 0.10)),
+        "ref_alt_min_m": float(fit_cfg.get("ref_alt_min_m", 5000.0)),
+        "ref_alt_max_m": float(fit_cfg.get("ref_alt_max_m", 25000.0)),
+        "ref_window_bins": int(fit_cfg.get("ref_window_bins", 2667)),
+        "max_relative_slope": float(fit_cfg.get("max_relative_slope", 0.25)),
+        "max_relative_variance": float(fit_cfg.get("max_relative_variance", 0.50)),
         "min_valid_fraction": float(fit_cfg.get("min_valid_fraction", 0.50)),
     }
 
@@ -158,7 +158,12 @@ def _evaluate_rayleigh_reference(
     fit_config: Mapping[str, Any],
     calibration_factor: float,
 ) -> dict[str, float | int]:
-    """Evaluate whether the selected Rayleigh reference window is acceptable."""
+    """Evaluate whether the selected Rayleigh reference window is acceptable.
+
+    The diagnostic ratio should be approximately flat in a clean molecular
+    region.  Variance and slope therefore describe residual aerosol/cloud
+    contamination or imperfect background correction in the selected interval.
+    """
     measured = np.asarray(measured_signal, dtype=np.float64)
     simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
     altitude = np.asarray(altitude_m, dtype=np.float64)
@@ -185,8 +190,8 @@ def _evaluate_rayleigh_reference(
             altitude_span = float(np.nanmax(valid_altitude) - np.nanmin(valid_altitude))
             relative_slope = float(abs(slope) * max(altitude_span, 1.0) / mean_ratio)
 
-    max_relative_slope = float(fit_config.get("max_relative_slope", 0.05))
-    max_relative_variance = float(fit_config.get("max_relative_variance", 0.10))
+    max_relative_slope = float(fit_config.get("max_relative_slope", 0.25))
+    max_relative_variance = float(fit_config.get("max_relative_variance", 0.50))
     min_valid_fraction = float(fit_config.get("min_valid_fraction", 0.50))
     success = (
         np.isfinite(calibration_factor)
@@ -206,6 +211,18 @@ def _evaluate_rayleigh_reference(
         "max_relative_variance": max_relative_variance,
         "min_valid_fraction": min_valid_fraction,
     }
+
+
+def _safe_ratio(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
+    """Return numerator/denominator where both terms are finite and positive."""
+    numerator = np.asarray(numerator, dtype=np.float64)
+    denominator = np.asarray(denominator, dtype=np.float64)
+    return np.divide(
+        numerator,
+        denominator,
+        out=np.full_like(numerator, np.nan, dtype=np.float64),
+        where=np.isfinite(numerator) & np.isfinite(denominator) & (denominator > 0.0),
+    )
 
 
 def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, str]:
@@ -434,13 +451,16 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         window_size=fit_cfg["ref_window_bins"],
         altitude_units="m",
     )
-    calibration_factor, ref_start_m, ref_stop_m, ref_valid_bins = robust_rayleigh_calibration_factor(
+    calibration_factor, calibration_intercept, ref_start_m, ref_stop_m, ref_valid_bins = linear_rayleigh_calibration_factor(
         measured_signal=glued_mean,
         simulated_molecular_signal=simulated_molecular_rcs,
         altitude_m=altitude_m,
         reference_center_idx=ref_idx,
         reference_window_bins=fit_cfg["ref_window_bins"],
     )
+    scaled_molecular_rcs = simulated_molecular_rcs * calibration_factor
+    scattering_ratio_mean = _safe_ratio(glued_mean, scaled_molecular_rcs)
+    scattering_ratio_block = _safe_ratio(glued_block, scaled_molecular_rcs[np.newaxis, :])
     rayleigh_qa = _evaluate_rayleigh_reference(glued_mean, simulated_molecular_rcs, altitude_m, ref_idx, fit_cfg["ref_window_bins"], fit_cfg, calibration_factor)
 
     lr_base, lr_std = _get_lidar_ratio(config, wavelength_nm, ds_l1["time"].values[0])
@@ -478,13 +498,15 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         "molecular_transmission": molecular_transmission,
         "simulated_molecular_signal": simulated_signal,
         "simulated_molecular_range_corrected_signal": simulated_molecular_rcs,
-        "scaled_molecular_range_corrected_signal": simulated_molecular_rcs * calibration_factor,
+        "scaled_molecular_range_corrected_signal": scaled_molecular_rcs,
         "glued_range_corrected_signal": glued,
         "glued_range_corrected_signal_error": glued_error,
         "glued_range_corrected_signal_block": glued_block,
         "glued_range_corrected_signal_error_block": glued_error_block,
         "glued_range_corrected_signal_mean": glued_mean,
         "glued_range_corrected_signal_error_mean": glued_error_mean,
+        "scattering_ratio_mean": scattering_ratio_mean,
+        "scattering_ratio_block": scattering_ratio_block,
         "aerosol_backscatter": beta_mean,
         "aerosol_backscatter_error": beta_std,
         "aerosol_extinction": alpha_mean,
@@ -502,6 +524,7 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         "rayleigh_reference_relative_variance": rayleigh_qa["relative_variance"],
         "rayleigh_reference_valid_fraction": rayleigh_qa["valid_fraction"],
         "rayleigh_calibration_factor": calibration_factor,
+        "rayleigh_calibration_intercept": calibration_intercept,
         "lidar_ratio_assumed_sr": lr_base,
         "lidar_ratio_std_sr": lr_std,
         "kfs_branch": _build_kfs_branch(altitude_m, ref_start_m, ref_stop_m, kfs_mode),
@@ -553,6 +576,8 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "glued_range_corrected_signal_error_block": (("block_time", "wavelength", "altitude"), stack_block("glued_range_corrected_signal_error_block")),
             "glued_range_corrected_signal_mean": (("wavelength", "altitude"), stack("glued_range_corrected_signal_mean")),
             "glued_range_corrected_signal_error_mean": (("wavelength", "altitude"), stack("glued_range_corrected_signal_error_mean")),
+            "scattering_ratio_mean": (("wavelength", "altitude"), stack("scattering_ratio_mean")),
+            "scattering_ratio_block": (("block_time", "wavelength", "altitude"), stack_block("scattering_ratio_block")),
             "aerosol_backscatter_mean": (("wavelength", "altitude"), stack("aerosol_backscatter")),
             "aerosol_backscatter_mean_error": (("wavelength", "altitude"), stack("aerosol_backscatter_error")),
             "aerosol_extinction_mean": (("wavelength", "altitude"), stack("aerosol_extinction")),
@@ -574,6 +599,7 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "rayleigh_reference_relative_variance": (("wavelength",), vector("rayleigh_reference_relative_variance")),
             "rayleigh_reference_valid_fraction": (("wavelength",), vector("rayleigh_reference_valid_fraction")),
             "rayleigh_calibration_factor": (("wavelength",), vector("rayleigh_calibration_factor")),
+            "rayleigh_calibration_intercept": (("wavelength",), vector("rayleigh_calibration_intercept")),
             "lidar_ratio_assumed_sr": (("wavelength",), vector("lidar_ratio_assumed_sr")),
             "lidar_ratio_std_sr": (("wavelength",), vector("lidar_ratio_std_sr")),
             "kfs_branch": (("wavelength", "altitude"), stack("kfs_branch").astype(np.int8)),
@@ -591,6 +617,9 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
     )
     ds_l2["altitude"].attrs.update({"units": "m", "long_name": "Altitude above station"})
     ds_l2["wavelength"].attrs.update({"units": "nm"})
+    ds_l2["scattering_ratio_mean"].attrs.update({"units": "1", "description": "Mean glued range-corrected signal divided by scaled molecular range-corrected signal."})
+    ds_l2["scattering_ratio_block"].attrs.update({"units": "1", "description": "Temporal-block scattering ratio from block-mean glued RCS and scaled molecular RCS."})
+    ds_l2["rayleigh_calibration_intercept"].attrs.update({"description": "Intercept from linear Rayleigh fit measured_RCS = slope * molecular_RCS + intercept."})
     ds_l2["kfs_branch"].attrs.update({"flag_values": "0, 1, 2, 3", "flag_meanings": "invalid backward_below_reference reference_window forward_above_reference_experimental", "description": "KFS/Fernald-Sasano retrieval branch by altitude. Above-reference two-sided retrieval is experimental and noise-sensitive."})
     ds_l2["gluing_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
     ds_l2["gluing_fallback_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used photon_counting_fallback_used"})
@@ -609,6 +638,8 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "LEBEAR_Mode": "block_and_mean_kfs",
             "KFS_Mode": kfs_mode,
             "KFS_Mode_Description": _kfs_mode_description(kfs_mode),
+            "Molecular_Rayleigh_Method": "Bucholtz-style Rayleigh scattering with angular backscatter at 180 degrees.",
+            "Rayleigh_Calibration_Method": "Linear fit measured_RCS = slope * molecular_RCS + intercept; slope scales the molecular RCS.",
             "Gluing_Error_Propagation": "Weighted one-sigma propagation across fade window: sigma² = w_an²(slope sigma_an)² + w_pc² sigma_pc².",
             "Rayleigh_Reference_Max_Relative_Slope": float(fit_cfg["max_relative_slope"]),
             "Rayleigh_Reference_Max_Relative_Variance": float(fit_cfg["max_relative_variance"]),
