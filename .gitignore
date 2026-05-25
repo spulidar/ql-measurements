@@ -10,6 +10,7 @@ __pycache__/
 venv/
 env/
 test.py
+milgrau.egg-info/
 
 # ==========================================
 # MILGRAU Data Directories (Do NOT commit heavy data)
