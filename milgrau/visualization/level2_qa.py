@@ -15,7 +15,6 @@ from scipy.signal import savgol_filter
 
 from milgrau.visualization.quicklooks import (
     extract_datetime_strings,
-    rolling_altitude,
     safe_error_of_mean,
     safe_time_mean,
 )
@@ -70,6 +69,48 @@ def _smooth_for_plot(values: np.ndarray | xr.DataArray, bins: int) -> np.ndarray
     smoothed = savgol_filter(filled, window_length=window, polyorder=min(3, window - 2), mode="interp")
     smoothed[~finite] = np.nan
     return smoothed
+
+
+def _robust_positive_xlim(values: np.ndarray, default_max: float = 6.0) -> tuple[float, float]:
+    """Return a positive x-limit that ignores extreme noisy outliers in plots."""
+    arr = np.asarray(values, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return 0.0, default_max
+    high = float(np.nanpercentile(finite, 99.0))
+    high = max(1.5, min(max(default_max, high * 1.15), 20.0))
+    return 0.0, high
+
+
+def _visual_scale_to_reference(
+    lower_signal: np.ndarray,
+    upper_signal: np.ndarray,
+    altitude_km: np.ndarray,
+    min_alt_km: float = 1.5,
+    max_alt_km: float = 12.0,
+) -> tuple[float, float, str]:
+    """Scale one signal to another for diagnostic display.
+
+    The fit is used only for visualization when operational gluing coefficients
+    are unavailable.  A clean gluing region should make the two detector modes
+    nearly linearly related after this transformation.
+    """
+    lower = np.asarray(lower_signal, dtype=np.float64)
+    upper = np.asarray(upper_signal, dtype=np.float64)
+    alt = np.asarray(altitude_km, dtype=np.float64)
+    valid = (
+        np.isfinite(lower)
+        & np.isfinite(upper)
+        & np.isfinite(alt)
+        & (alt >= min_alt_km)
+        & (alt <= max_alt_km)
+        & (lower > 0.0)
+        & (upper > 0.0)
+    )
+    if valid.sum() < 10:
+        return 1.0, 0.0, "unscaled AN"
+    slope, intercept = np.polyfit(lower[valid], upper[valid], 1)
+    return float(slope), float(intercept), "AN scaled for display"
 
 
 def add_atmospheric_boundaries(ax: Any, ds: xr.Dataset, max_alt_km: float) -> bool:
@@ -136,27 +177,48 @@ def plot_qa_gluing(
     glued_profile = _smooth_for_plot(safe_time_mean(glued).values, smooth_bins)
     split_alt_km = ds_l2["gluing_split_altitude_m"].sel(wavelength=wavelength) / 1000.0
     success = ds_l2["gluing_success_flag"].sel(wavelength=wavelength)
+    success_values = np.asarray(success.values, dtype=float)
+    success_rate = 100.0 * float(np.nansum(success_values)) / max(success.size, 1)
 
     fig = plt.figure(figsize=(13.5, 8.0))
-    gs = gridspec.GridSpec(1, 2, width_ratios=[1.2, 1.0], wspace=0.25)
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1.25, 0.95], wspace=0.25)
     ax0 = plt.subplot(gs[0])
     ax1 = plt.subplot(gs[1])
 
+    scaling_note = "L1 channels unavailable"
     if ds_l1 is not None:
         analog_ch, photon_ch = infer_l1_channels_for_wavelength(ds_l1, wavelength)
         if analog_ch is not None and photon_ch is not None and "range_corrected_signal" in ds_l1:
-            analog_profile = _smooth_for_plot(safe_time_mean(ds_l1["range_corrected_signal"].sel(channel=analog_ch)).values, smooth_bins)
+            analog_profile_raw = safe_time_mean(ds_l1["range_corrected_signal"].sel(channel=analog_ch)).values
             photon_profile = _smooth_for_plot(safe_time_mean(ds_l1["range_corrected_signal"].sel(channel=photon_ch)).values, smooth_bins)
-            ax0.plot(analog_profile[valid_alt], alt_km[valid_alt], linestyle="--", linewidth=1.6, label=f"{analog_ch} mean RCS")
-            ax0.plot(photon_profile[valid_alt], alt_km[valid_alt], linestyle=":", linewidth=1.8, label=f"{photon_ch} mean RCS")
+
+            valid_success = np.isfinite(success_values) & (success_values == 1)
+            if bool(valid_success.any()) and {"gluing_slope", "gluing_intercept"}.issubset(set(ds_l2.data_vars)):
+                slope_values = ds_l2["gluing_slope"].sel(wavelength=wavelength).values
+                intercept_values = ds_l2["gluing_intercept"].sel(wavelength=wavelength).values
+                slope = float(np.nanmedian(np.asarray(slope_values)[valid_success]))
+                intercept = float(np.nanmedian(np.asarray(intercept_values)[valid_success]))
+                scaling_note = "AN scaled with median operational gluing coefficients"
+            else:
+                slope, intercept, scaling_note = _visual_scale_to_reference(analog_profile_raw, photon_profile, alt_km)
+
+            scaled_analog = _smooth_for_plot(slope * analog_profile_raw + intercept, smooth_bins)
+            ax0.plot(scaled_analog[valid_alt], alt_km[valid_alt], linestyle="--", linewidth=1.8, label=f"{analog_ch} scaled")
+            ax0.plot(photon_profile[valid_alt], alt_km[valid_alt], linestyle=":", linewidth=2.0, label=f"{photon_ch} mean RCS")
 
     ax0.plot(glued_profile[valid_alt], alt_km[valid_alt], color=color, linewidth=2.4, label="Glued mean RCS")
     median_split = float(np.nanmedian(split_alt_km.values)) if np.any(np.isfinite(split_alt_km.values)) else np.nan
     if np.isfinite(median_split) and 0 < median_split <= max_alt_km:
         ax0.axhline(median_split, color="black", linestyle="-.", linewidth=1.6, label=f"Median split {median_split:.2f} km")
 
-    ax0.set_title(f"QA Gluing Profile - {format_wavelength_label(wavelength)}", fontsize=14, fontweight="bold")
-    ax0.set_xlabel("RCS [a.u.]", fontsize=12, fontweight="bold")
+    if {"gluing_start_altitude_m", "gluing_stop_altitude_m"}.issubset(set(ds_l2.data_vars)):
+        start_km = ds_l2["gluing_start_altitude_m"].sel(wavelength=wavelength).values / 1000.0
+        stop_km = ds_l2["gluing_stop_altitude_m"].sel(wavelength=wavelength).values / 1000.0
+        if np.isfinite(start_km).any() and np.isfinite(stop_km).any():
+            ax0.axhspan(float(np.nanmedian(start_km)), float(np.nanmedian(stop_km)), color="gray", alpha=0.14, label="Median fade window")
+
+    ax0.set_title(f"Scaled Gluing QA - {format_wavelength_label(wavelength)}", fontsize=14, fontweight="bold")
+    ax0.set_xlabel("RCS on photon-counting scale [a.u.]", fontsize=12, fontweight="bold")
     ax0.set_ylabel("Altitude (km a.g.l.)", fontsize=12, fontweight="bold")
     ax0.set_ylim(0, max_alt_km)
     ax0.set_xscale("symlog", linthresh=1e-3)
@@ -172,13 +234,16 @@ def plot_qa_gluing(
         ax1.plot(np.arange(split_alt_km.size), split_alt_km.values, marker="o", linestyle="-", linewidth=1.4, markersize=3)
         ax1.set_xlabel("Profile index", fontsize=12, fontweight="bold")
 
-    success_rate = 100.0 * float(np.nansum(success.values)) / max(success.size, 1)
     ax1.set_title(f"Split Altitude Time Series\nSuccess rate: {success_rate:.1f}%", fontsize=14, fontweight="bold")
     ax1.set_ylabel("Split altitude (km a.g.l.)", fontsize=12, fontweight="bold")
     ax1.set_ylim(0, max_alt_km)
     ax1.grid(True, alpha=0.45)
     if np.isfinite(median_split) and 0 < median_split <= max_alt_km:
         ax1.axhline(median_split, color="black", linestyle="-.", linewidth=1.6)
+    if success_rate == 0.0:
+        ax1.text(0.05, 0.95, "Operational gluing failed for all profiles.\nLeft panel uses diagnostic scaling only.\nKFS should not be interpreted as final.", transform=ax1.transAxes, va="top", fontsize=10, bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "gray"})
+    else:
+        ax1.text(0.05, 0.95, scaling_note, transform=ax1.transAxes, va="top", fontsize=10, bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "gray"})
 
     fig.suptitle(f"MILGRAU Level 2 QA - Signal Gluing - {format_wavelength_label(wavelength)}\n{date_title}", fontsize=15, fontweight="bold", y=0.97)
     fig.subplots_adjust(top=0.84, bottom=0.14)
@@ -282,43 +347,27 @@ def plot_qa_scattering_ratio(
     valid_alt = alt_km <= max_alt_km
     smooth_bins = int(config.get("visualization", {}).get("level2_qa", {}).get("smooth_bins", 15))
     sr = _smooth_for_plot(ds_l2["scattering_ratio_mean"].sel(wavelength=wavelength).values, smooth_bins)
-
-    fig = plt.figure(figsize=(13.5, 8.5))
-    gs = gridspec.GridSpec(1, 2, width_ratios=[1.0, 1.0], wspace=0.25)
-    ax0 = plt.subplot(gs[0])
-    ax1 = plt.subplot(gs[1], sharey=ax0)
     color = channel_color(wavelength)
 
-    ax0.plot(sr[valid_alt], alt_km[valid_alt], color=color, linewidth=2.2, label="Scattering ratio")
-    ax0.axvline(1.0, color="black", linestyle="--", linewidth=1.4, label="Molecular reference SR=1")
-    ax0.set_title("Full profile", fontsize=14, fontweight="bold")
-    ax0.set_xlabel("Scattering ratio", fontsize=12, fontweight="bold")
-    ax0.set_ylabel("Altitude (km a.g.l.)", fontsize=12, fontweight="bold")
-    ax0.set_xlim(0, 6)
-    ax0.set_ylim(0, max_alt_km)
-    ax0.grid(True, alpha=0.45)
+    fig, ax = plt.subplots(figsize=(8.6, 9.4))
+    fig.subplots_adjust(top=0.86, bottom=0.14)
+    ax.plot(sr[valid_alt], alt_km[valid_alt], color=color, linewidth=2.2, label="Scattering ratio")
+    ax.axvline(1.0, color="black", linestyle="--", linewidth=1.4, label="Molecular reference SR=1")
+    ax.set_title(f"Scattering Ratio - {format_wavelength_label(wavelength)}", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Scattering ratio", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Altitude (km a.g.l.)", fontsize=12, fontweight="bold")
+    ax.set_xlim(*_robust_positive_xlim(sr[valid_alt], default_max=6.0))
+    ax.set_ylim(0, max_alt_km)
+    ax.grid(True, alpha=0.45)
+    add_atmospheric_boundaries(ax, ds_l2, max_alt_km)
 
-    zoom_min_km = 10.0
-    zoom = (alt_km >= zoom_min_km) & valid_alt
-    ax1.plot(sr[zoom], alt_km[zoom], color=color, linewidth=2.2, label="Scattering ratio")
-    ax1.axvline(1.0, color="black", linestyle="--", linewidth=1.4, label="SR=1")
-    ax1.set_title("Upper-troposphere / stratosphere zoom", fontsize=14, fontweight="bold")
-    ax1.set_xlabel("Scattering ratio", fontsize=12, fontweight="bold")
-    ax1.set_xlim(0, 4)
-    ax1.set_ylim(zoom_min_km, max_alt_km)
-    ax1.grid(True, alpha=0.45)
-    plt.setp(ax1.get_yticklabels(), visible=False)
-
-    for ax in (ax0, ax1):
-        add_atmospheric_boundaries(ax, ds_l2, max_alt_km)
-        ax.legend(fontsize=9, loc="best")
-
-    if np.any(zoom & np.isfinite(sr)):
-        mean_sr = float(np.nanmean(sr[zoom]))
-        ax1.text(0.05, 0.92, f"Mean SR above {zoom_min_km:.0f} km = {mean_sr:.2f}\nSavgol plot smoothing = {smooth_bins} bins", transform=ax1.transAxes, fontsize=10, va="top")
+    upper_mask = (alt_km >= 10.0) & valid_alt & np.isfinite(sr)
+    if np.any(upper_mask):
+        mean_sr = float(np.nanmean(sr[upper_mask]))
+        ax.text(0.04, 0.96, f"Mean SR above 10 km = {mean_sr:.2f}\nSavgol plot smoothing = {smooth_bins} bins", transform=ax.transAxes, fontsize=10, va="top", bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "gray"})
+    ax.legend(fontsize=9, loc="best")
 
     fig.suptitle(f"MILGRAU Level 2 QA - Scattering Ratio - {format_wavelength_label(wavelength)}\n{date_title}", fontsize=15, fontweight="bold", y=0.97)
-    fig.subplots_adjust(top=0.84, bottom=0.14)
     add_footer_and_logos(fig, root_dir)
     out_path = Path(output_folder) / f"QA_ScatteringRatio_{file_name_prefix}_{wavelength}nm.{output_format}"
     Path(output_folder).mkdir(parents=True, exist_ok=True)
