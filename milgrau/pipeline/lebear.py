@@ -1,9 +1,10 @@
 """LEBEAR Level 2 optical inversion pipeline.
 
 LEBEAR converts Level 1 Range Corrected Signal products into first-pass Level 2
-optical products. This implementation produces both temporal block products and
-a full-period mean product, using Analog/Photon Counting gluing, Rayleigh
-molecular calibration, and KFS/Fernald-Sasano inversion.
+optical products.  The fundamental retrieval unit is a temporal block.  Signals
+are averaged first, then Analog/Photon Counting gluing, Rayleigh calibration,
+scattering ratio and KFS/Fernald-Sasano inversion are calculated independently
+for each block.  Mean products are averages of valid block products.
 """
 
 from __future__ import annotations
@@ -132,9 +133,10 @@ def _kfs_mode_description(mode: str) -> str:
     return "Backward Fernald-Sasano retrieval below the reference altitude."
 
 
-def _get_temporal_average_minutes(config: Mapping[str, Any]) -> int:
-    """Return the temporal averaging window in minutes for block products."""
-    return max(int(config.get("inversion", {}).get("temporal_average_minutes", 15)), 1)
+def _get_block_average_minutes(config: Mapping[str, Any]) -> int:
+    """Return temporal block size used by LEBEAR retrievals."""
+    inv_cfg = config.get("inversion", {})
+    return max(int(inv_cfg.get("block_average_minutes", inv_cfg.get("temporal_average_minutes", 15))), 1)
 
 
 def _build_kfs_branch(altitude_m: np.ndarray, ref_start_m: float, ref_stop_m: float, mode: str) -> np.ndarray:
@@ -160,9 +162,9 @@ def _evaluate_rayleigh_reference(
 ) -> dict[str, float | int]:
     """Evaluate whether the selected Rayleigh reference window is acceptable.
 
-    The diagnostic ratio should be approximately flat in a clean molecular
-    region.  Variance and slope therefore describe residual aerosol/cloud
-    contamination or imperfect background correction in the selected interval.
+    In a clean molecular interval the measured/molecular ratio should be nearly
+    flat.  Slope and variance diagnose aerosol contamination, cloud leakage or
+    residual background structure inside the reference window.
     """
     measured = np.asarray(measured_signal, dtype=np.float64)
     simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
@@ -217,12 +219,16 @@ def _safe_ratio(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
     """Return numerator/denominator where both terms are finite and positive."""
     numerator = np.asarray(numerator, dtype=np.float64)
     denominator = np.asarray(denominator, dtype=np.float64)
-    return np.divide(
-        numerator,
-        denominator,
-        out=np.full_like(numerator, np.nan, dtype=np.float64),
-        where=np.isfinite(numerator) & np.isfinite(denominator) & (denominator > 0.0),
-    )
+    return np.divide(numerator, denominator, out=np.full_like(numerator, np.nan, dtype=np.float64), where=np.isfinite(numerator) & np.isfinite(denominator) & (denominator > 0.0))
+
+
+def _nanmean_or_nan(matrix: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Return a NaN-safe mean without RuntimeWarning for all-NaN slices."""
+    arr = np.asarray(matrix, dtype=np.float64)
+    valid = np.isfinite(arr)
+    count = valid.sum(axis=axis)
+    total = np.nansum(arr, axis=axis)
+    return np.divide(total, count, out=np.full_like(total, np.nan, dtype=np.float64), where=count > 0)
 
 
 def _build_thermodynamic_profile(ds_l1: xr.Dataset, altitude_agl_m: np.ndarray, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, str]:
@@ -274,100 +280,6 @@ def _propagate_glued_error(analog_error: np.ndarray, photon_error: np.ndarray, s
     return glued_error
 
 
-def _glue_wavelength_profiles(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.ndarray, config: Mapping[str, Any], logger: logging.Logger) -> dict[str, np.ndarray | str | None]:
-    """Glue all time profiles for one wavelength and return signal matrices plus diagnostics."""
-    analog_ch, photon_ch = _infer_channel_pair(ds_l1, wavelength_nm)
-    if analog_ch is None and photon_ch is None:
-        raise ValueError(f"No channel found for wavelength {wavelength_nm} nm.")
-
-    signal_da = ds_l1["range_corrected_signal"]
-    error_da = ds_l1["range_corrected_signal_error"]
-    n_time = ds_l1.sizes.get("time", 1)
-    n_alt = altitude_m.size
-    glued = np.full((n_time, n_alt), np.nan, dtype=np.float64)
-    glued_error = np.full((n_time, n_alt), np.nan, dtype=np.float64)
-    success_flag = np.zeros(n_time, dtype=np.int8)
-    fallback_flag = np.zeros(n_time, dtype=np.int8)
-    split_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
-    start_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
-    stop_altitude_m = np.full(n_time, np.nan, dtype=np.float64)
-    slope = np.full(n_time, np.nan, dtype=np.float64)
-    intercept = np.full(n_time, np.nan, dtype=np.float64)
-    correlation = np.full(n_time, np.nan, dtype=np.float64)
-    gluing_cfg = _get_gluing_config(config)
-
-    if analog_ch is not None and photon_ch is not None:
-        analog_signal = signal_da.sel(channel=analog_ch).values.astype(np.float64)
-        photon_signal = signal_da.sel(channel=photon_ch).values.astype(np.float64)
-        analog_error = error_da.sel(channel=analog_ch).values.astype(np.float64)
-        photon_error = error_da.sel(channel=photon_ch).values.astype(np.float64)
-        for time_idx in range(n_time):
-            glued_profile, split_point, slope_i, intercept_i, diagnostics = slide_glue_signals(
-                analog_sig=analog_signal[time_idx, :],
-                pc_sig=photon_signal[time_idx, :],
-                altitude=altitude_m,
-                window_size=gluing_cfg["window_size"],
-                min_corr=gluing_cfg["min_corr"],
-                search_min_idx=gluing_cfg["search_min_idx"],
-                search_max_idx=gluing_cfg["search_max_idx"],
-                intercept_threshold=gluing_cfg["intercept_threshold"],
-                gaussian_threshold=gluing_cfg["gaussian_threshold"],
-                minmax_threshold=gluing_cfg["minmax_threshold"],
-                return_diagnostics=True,
-            )
-            slope[time_idx] = slope_i
-            intercept[time_idx] = intercept_i
-            correlation[time_idx] = float(diagnostics.get("best_corr", np.nan))
-            if split_point >= 0:
-                min_bin = int(diagnostics.get("min_bin", max(split_point - gluing_cfg["window_size"] // 2, 0)))
-                max_bin = int(diagnostics.get("max_bin", min(split_point + gluing_cfg["window_size"] // 2, n_alt)))
-                glued[time_idx, :] = glued_profile
-                success_flag[time_idx] = 1
-                split_altitude_m[time_idx] = float(altitude_m[split_point])
-                start_altitude_m[time_idx] = float(altitude_m[min_bin])
-                stop_altitude_m[time_idx] = float(altitude_m[max_bin - 1])
-                glued_error[time_idx, :] = _propagate_glued_error(analog_error[time_idx, :], photon_error[time_idx, :], slope_i, min_bin, max_bin)
-            elif gluing_cfg["fallback_to_photon_counting"]:
-                glued[time_idx, :] = photon_signal[time_idx, :]
-                glued_error[time_idx, :] = photon_error[time_idx, :]
-                fallback_flag[time_idx] = 1
-            else:
-                logger.warning(f"  -> {wavelength_nm} nm profile {time_idx}: gluing failed and photon fallback is disabled.")
-        logger.info(f"  -> {wavelength_nm} nm gluing success: {100.0 * success_flag.sum() / max(n_time, 1):.1f}% ({analog_ch} + {photon_ch}); fallback profiles: {int(fallback_flag.sum())}.")
-        source = "analog_photon_glued"
-    else:
-        fallback_ch = photon_ch or analog_ch
-        if fallback_ch is None:
-            raise ValueError(f"No usable channel found for wavelength {wavelength_nm} nm.")
-        if photon_ch is not None and analog_ch is None and not gluing_cfg["fallback_to_photon_counting"]:
-            raise ValueError(f"{wavelength_nm} nm has only photon-counting channel {photon_ch}, and photon fallback is disabled.")
-        glued[:, :] = signal_da.sel(channel=fallback_ch).values.astype(np.float64)
-        glued_error[:, :] = error_da.sel(channel=fallback_ch).values.astype(np.float64)
-        if photon_ch is not None and analog_ch is None:
-            fallback_flag[:] = 1
-        source = f"single_channel_{fallback_ch}"
-        logger.warning(f"  -> {wavelength_nm} nm using single-channel fallback: {fallback_ch}.")
-
-    if not np.isfinite(glued).any():
-        raise ValueError(f"No finite glued/fallback signal available for wavelength {wavelength_nm} nm.")
-
-    return {
-        "analog_channel": analog_ch,
-        "photon_channel": photon_ch,
-        "source": source,
-        "glued": glued,
-        "glued_error": glued_error,
-        "success_flag": success_flag,
-        "fallback_flag": fallback_flag,
-        "split_altitude_m": split_altitude_m,
-        "start_altitude_m": start_altitude_m,
-        "stop_altitude_m": stop_altitude_m,
-        "slope": slope,
-        "intercept": intercept,
-        "correlation": correlation,
-    }
-
-
 def _error_of_mean(error_matrix: np.ndarray) -> np.ndarray:
     """Combine profile one-sigma errors into uncertainty of the temporal mean."""
     valid_count = np.sum(np.isfinite(error_matrix), axis=0)
@@ -386,12 +298,30 @@ def _block_groups(time_values: np.ndarray, minutes: int) -> tuple[np.ndarray, li
 
 def _mean_by_groups(matrix: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
     """Calculate NaN-safe means for a time x altitude matrix over index groups."""
-    return np.stack([np.nanmean(matrix[group, :], axis=0) for group in groups], axis=0)
+    return np.stack([_nanmean_or_nan(matrix[group, :], axis=0) for group in groups], axis=0)
 
 
 def _error_by_groups(error_matrix: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
     """Calculate uncertainty of grouped means from one-sigma profiles."""
     return np.stack([_error_of_mean(error_matrix[group, :]) for group in groups], axis=0)
+
+
+def _expand_blocks_to_time(block_matrix: np.ndarray, groups: list[np.ndarray], n_time: int) -> np.ndarray:
+    """Map block products back to the original time axis for compatibility."""
+    block_matrix = np.asarray(block_matrix, dtype=np.float64)
+    expanded = np.full((n_time, block_matrix.shape[-1]), np.nan, dtype=np.float64)
+    for block_idx, group in enumerate(groups):
+        expanded[group, :] = block_matrix[block_idx, :]
+    return expanded
+
+
+def _expand_block_vector_to_time(values: np.ndarray, groups: list[np.ndarray], n_time: int, dtype=np.float64) -> np.ndarray:
+    """Map one block diagnostic vector back to the original time axis."""
+    values = np.asarray(values)
+    expanded = np.full(n_time, np.nan, dtype=np.float64)
+    for block_idx, group in enumerate(groups):
+        expanded[group] = values[block_idx]
+    return expanded.astype(dtype) if np.issubdtype(dtype, np.integer) else expanded.astype(dtype)
 
 
 def _run_kfs_profile(rcs: np.ndarray, rcs_error: np.ndarray, altitude_m: np.ndarray, beta_mol: np.ndarray, ref_idx: int, lr_base: float, lr_std: float, config: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -422,9 +352,147 @@ def _nan_optical_products_like(reference: np.ndarray) -> tuple[np.ndarray, np.nd
     return nan_arr.copy(), nan_arr.copy(), nan_arr.copy(), nan_arr.copy()
 
 
+def _origin_rayleigh_calibration_factor(
+    measured_signal: np.ndarray,
+    simulated_molecular_signal: np.ndarray,
+    altitude_m: np.ndarray,
+    reference_center_idx: int,
+    reference_window_bins: int,
+) -> tuple[float, float, float, int]:
+    """Return multiplicative Rayleigh calibration constrained through the origin.
+
+    Elastic Rayleigh calibration is physically a multiplicative normalization of
+    the molecular return.  A free intercept is useful as a diagnostic of residual
+    background, but the primary calibration factor should not absorb an additive
+    offset.
+    """
+    measured = np.asarray(measured_signal, dtype=np.float64)
+    simulated = np.asarray(simulated_molecular_signal, dtype=np.float64)
+    altitude = np.asarray(altitude_m, dtype=np.float64)
+    center = int(reference_center_idx)
+    half_window = max(int(reference_window_bins) // 2, 1)
+    start = max(center - half_window, 0)
+    stop = min(center + half_window + 1, measured.size)
+    x = simulated[start:stop]
+    y = measured[start:stop]
+    valid = np.isfinite(x) & np.isfinite(y) & (x > 0.0) & (y > 0.0)
+    if valid.sum() < 2:
+        return np.nan, float(altitude[start]), float(altitude[stop - 1]), int(valid.sum())
+    factor = float(np.nansum(x[valid] * y[valid]) / np.nansum(x[valid] ** 2))
+    return factor, float(altitude[start]), float(altitude[stop - 1]), int(valid.sum())
+
+
+def _valid_block_mean(block_matrix: np.ndarray, valid_block: np.ndarray) -> np.ndarray:
+    """Average only block products that passed gluing and Rayleigh QA."""
+    block_matrix = np.asarray(block_matrix, dtype=np.float64)
+    valid = np.asarray(valid_block, dtype=bool)
+    if valid.any():
+        return _nanmean_or_nan(block_matrix[valid, :], axis=0)
+    return np.full(block_matrix.shape[-1], np.nan, dtype=np.float64)
+
+
+def _valid_block_error(block_error_matrix: np.ndarray, valid_block: np.ndarray) -> np.ndarray:
+    """Combine block uncertainties using only valid retrieval blocks."""
+    block_error_matrix = np.asarray(block_error_matrix, dtype=np.float64)
+    valid = np.asarray(valid_block, dtype=bool)
+    if valid.any():
+        return _error_of_mean(block_error_matrix[valid, :])
+    return np.full(block_error_matrix.shape[-1], np.nan, dtype=np.float64)
+
+
 def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.ndarray, config: Mapping[str, Any], logger: logging.Logger) -> dict[str, Any]:
-    """Process one wavelength into block and mean Level 2 arrays."""
-    gluing = _glue_wavelength_profiles(ds_l1, wavelength_nm, altitude_m, config, logger)
+    """Process one wavelength using 15-minute block retrievals."""
+    analog_ch, photon_ch = _infer_channel_pair(ds_l1, wavelength_nm)
+    if analog_ch is None and photon_ch is None:
+        raise ValueError(f"No channel found for wavelength {wavelength_nm} nm.")
+
+    signal_da = ds_l1["range_corrected_signal"]
+    error_da = ds_l1["range_corrected_signal_error"]
+    n_time = ds_l1.sizes.get("time", 1)
+    n_alt = altitude_m.size
+    block_minutes = _get_block_average_minutes(config)
+    block_time, block_groups = _block_groups(ds_l1["time"].values, block_minutes)
+    n_block = len(block_groups)
+    gluing_cfg = _get_gluing_config(config)
+
+    if photon_ch is not None:
+        photon_signal = signal_da.sel(channel=photon_ch).values.astype(np.float64)
+        photon_error = error_da.sel(channel=photon_ch).values.astype(np.float64)
+        photon_block = _mean_by_groups(photon_signal, block_groups)
+        photon_error_block = _error_by_groups(photon_error, block_groups)
+    else:
+        photon_signal = None
+        photon_error = None
+        photon_block = None
+        photon_error_block = None
+
+    if analog_ch is not None:
+        analog_signal = signal_da.sel(channel=analog_ch).values.astype(np.float64)
+        analog_error = error_da.sel(channel=analog_ch).values.astype(np.float64)
+        analog_block = _mean_by_groups(analog_signal, block_groups)
+        analog_error_block = _error_by_groups(analog_error, block_groups)
+    else:
+        analog_signal = None
+        analog_error = None
+        analog_block = None
+        analog_error_block = None
+
+    glued_block = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    glued_error_block = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    gluing_success_block = np.zeros(n_block, dtype=np.int8)
+    gluing_fallback_block = np.zeros(n_block, dtype=np.int8)
+    gluing_split_block = np.full(n_block, np.nan, dtype=np.float64)
+    gluing_start_block = np.full(n_block, np.nan, dtype=np.float64)
+    gluing_stop_block = np.full(n_block, np.nan, dtype=np.float64)
+    gluing_slope_block = np.full(n_block, np.nan, dtype=np.float64)
+    gluing_intercept_block = np.full(n_block, np.nan, dtype=np.float64)
+    gluing_correlation_block = np.full(n_block, np.nan, dtype=np.float64)
+
+    if analog_block is not None and photon_block is not None and analog_error_block is not None and photon_error_block is not None:
+        source = "block_mean_analog_photon_glued"
+        for block_idx in range(n_block):
+            glued_profile, split_point, slope_i, intercept_i, diagnostics = slide_glue_signals(
+                analog_sig=analog_block[block_idx, :],
+                pc_sig=photon_block[block_idx, :],
+                altitude=altitude_m,
+                window_size=gluing_cfg["window_size"],
+                min_corr=gluing_cfg["min_corr"],
+                search_min_idx=gluing_cfg["search_min_idx"],
+                search_max_idx=gluing_cfg["search_max_idx"],
+                intercept_threshold=gluing_cfg["intercept_threshold"],
+                gaussian_threshold=gluing_cfg["gaussian_threshold"],
+                minmax_threshold=gluing_cfg["minmax_threshold"],
+                return_diagnostics=True,
+            )
+            gluing_slope_block[block_idx] = slope_i
+            gluing_intercept_block[block_idx] = intercept_i
+            gluing_correlation_block[block_idx] = float(diagnostics.get("best_corr", np.nan))
+            if split_point >= 0:
+                min_bin = int(diagnostics.get("min_bin", max(split_point - gluing_cfg["window_size"] // 2, 0)))
+                max_bin = int(diagnostics.get("max_bin", min(split_point + gluing_cfg["window_size"] // 2, n_alt)))
+                glued_block[block_idx, :] = glued_profile
+                glued_error_block[block_idx, :] = _propagate_glued_error(analog_error_block[block_idx, :], photon_error_block[block_idx, :], slope_i, min_bin, max_bin)
+                gluing_success_block[block_idx] = 1
+                gluing_split_block[block_idx] = float(altitude_m[split_point])
+                gluing_start_block[block_idx] = float(altitude_m[min_bin])
+                gluing_stop_block[block_idx] = float(altitude_m[max_bin - 1])
+            elif gluing_cfg["fallback_to_photon_counting"]:
+                glued_block[block_idx, :] = photon_block[block_idx, :]
+                glued_error_block[block_idx, :] = photon_error_block[block_idx, :]
+                gluing_fallback_block[block_idx] = 1
+        logger.info(f"  -> {wavelength_nm} nm block gluing success: {100.0 * gluing_success_block.sum() / max(n_block, 1):.1f}% ({analog_ch} + {photon_ch}); fallback blocks: {int(gluing_fallback_block.sum())}.")
+    else:
+        fallback_ch = photon_ch or analog_ch
+        fallback_block = photon_block if photon_block is not None else analog_block
+        fallback_error_block = photon_error_block if photon_error_block is not None else analog_error_block
+        if fallback_ch is None or fallback_block is None or fallback_error_block is None:
+            raise ValueError(f"No usable channel found for wavelength {wavelength_nm} nm.")
+        glued_block[:, :] = fallback_block
+        glued_error_block[:, :] = fallback_error_block
+        gluing_fallback_block[:] = 1
+        source = f"block_mean_single_channel_{fallback_ch}"
+        logger.warning(f"  -> {wavelength_nm} nm using block single-channel fallback: {fallback_ch}.")
+
     pressure_hpa, temperature_k, molecular_source = _build_thermodynamic_profile(ds_l1, altitude_m, config)
     beta_mol, alpha_mol = calculate_molecular_profile(temperature_k, pressure_hpa, wavelength_nm)
     simulated_signal, molecular_transmission = calculate_simulated_molecular_signal(beta_mol, alpha_mol, altitude_m)
@@ -432,63 +500,125 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
     safe_altitude = np.where(altitude_m > 0.0, altitude_m, positive_altitudes[0] if positive_altitudes.size else 1.0)
     simulated_molecular_rcs = simulated_signal * safe_altitude**2
 
-    glued = gluing["glued"]  # type: ignore[assignment]
-    glued_error = gluing["glued_error"]  # type: ignore[assignment]
-    glued_mean = np.nanmean(glued, axis=0)
-    glued_error_mean = _error_of_mean(glued_error)
-    block_minutes = _get_temporal_average_minutes(config)
-    block_time, block_groups = _block_groups(ds_l1["time"].values, block_minutes)
-    glued_block = _mean_by_groups(glued, block_groups)
-    glued_error_block = _error_by_groups(glued_error, block_groups)
-
     fit_cfg = _get_molecular_fit_config(config)
-    ref_idx = find_optimal_reference_altitude(
-        rcs=glued_mean,
-        beta_mol=simulated_molecular_rcs,
-        altitude=altitude_m,
-        min_alt=fit_cfg["ref_alt_min_m"],
-        max_alt=fit_cfg["ref_alt_max_m"],
-        window_size=fit_cfg["ref_window_bins"],
-        altitude_units="m",
-    )
-    calibration_factor, calibration_intercept, ref_start_m, ref_stop_m, ref_valid_bins = linear_rayleigh_calibration_factor(
-        measured_signal=glued_mean,
-        simulated_molecular_signal=simulated_molecular_rcs,
-        altitude_m=altitude_m,
-        reference_center_idx=ref_idx,
-        reference_window_bins=fit_cfg["ref_window_bins"],
-    )
-    scaled_molecular_rcs = simulated_molecular_rcs * calibration_factor
-    scattering_ratio_mean = _safe_ratio(glued_mean, scaled_molecular_rcs)
-    scattering_ratio_block = _safe_ratio(glued_block, scaled_molecular_rcs[np.newaxis, :])
-    rayleigh_qa = _evaluate_rayleigh_reference(glued_mean, simulated_molecular_rcs, altitude_m, ref_idx, fit_cfg["ref_window_bins"], fit_cfg, calibration_factor)
-
     lr_base, lr_std = _get_lidar_ratio(config, wavelength_nm, ds_l1["time"].values[0])
-    if int(rayleigh_qa["success_flag"]) == 1:
-        beta_mean, beta_std, alpha_mean, alpha_std = _run_kfs_profile(glued_mean, glued_error_mean, altitude_m, beta_mol, ref_idx, lr_base, lr_std, config)
-    else:
-        logger.warning(
-            f"  -> {wavelength_nm} nm Rayleigh reference rejected: "
-            f"slope={rayleigh_qa['relative_slope']:.3g}, variance={rayleigh_qa['relative_variance']:.3g}, "
-            f"valid_fraction={rayleigh_qa['valid_fraction']:.3g}. Optical KFS products set to NaN."
-        )
-        beta_mean, beta_std, alpha_mean, alpha_std = _nan_optical_products_like(glued_mean)
-
-    beta_block = []
-    beta_block_std = []
-    alpha_block = []
-    alpha_block_std = []
-    for block_idx in range(glued_block.shape[0]):
-        if int(rayleigh_qa["success_flag"]) == 1:
-            b_mean, b_std, a_mean, a_std = _run_kfs_profile(glued_block[block_idx, :], glued_error_block[block_idx, :], altitude_m, beta_mol, ref_idx, lr_base, lr_std, config)
-        else:
-            b_mean, b_std, a_mean, a_std = _nan_optical_products_like(glued_block[block_idx, :])
-        beta_block.append(b_mean)
-        beta_block_std.append(b_std)
-        alpha_block.append(a_mean)
-        alpha_block_std.append(a_std)
-
     kfs_mode = _get_kfs_mode(config)
+
+    rayleigh_success_block = np.zeros(n_block, dtype=np.int8)
+    ref_altitude_block = np.full(n_block, np.nan, dtype=np.float64)
+    ref_start_block = np.full(n_block, np.nan, dtype=np.float64)
+    ref_stop_block = np.full(n_block, np.nan, dtype=np.float64)
+    ref_valid_bins_block = np.zeros(n_block, dtype=np.int32)
+    ref_relative_slope_block = np.full(n_block, np.nan, dtype=np.float64)
+    ref_relative_variance_block = np.full(n_block, np.nan, dtype=np.float64)
+    ref_valid_fraction_block = np.full(n_block, np.nan, dtype=np.float64)
+    calibration_factor_block = np.full(n_block, np.nan, dtype=np.float64)
+    calibration_intercept_block = np.full(n_block, np.nan, dtype=np.float64)
+    scaled_molecular_rcs_block = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    scattering_ratio_block = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    beta_block = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    beta_block_std = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    alpha_block = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    alpha_block_std = np.full((n_block, n_alt), np.nan, dtype=np.float64)
+    kfs_branch_block = np.zeros((n_block, n_alt), dtype=np.int8)
+
+    for block_idx in range(n_block):
+        if gluing_success_block[block_idx] != 1:
+            continue
+        ref_idx = find_optimal_reference_altitude(
+            rcs=glued_block[block_idx, :],
+            beta_mol=simulated_molecular_rcs,
+            altitude=altitude_m,
+            min_alt=fit_cfg["ref_alt_min_m"],
+            max_alt=fit_cfg["ref_alt_max_m"],
+            window_size=fit_cfg["ref_window_bins"],
+            altitude_units="m",
+        )
+        factor, ref_start_m, ref_stop_m, ref_valid_bins = _origin_rayleigh_calibration_factor(
+            measured_signal=glued_block[block_idx, :],
+            simulated_molecular_signal=simulated_molecular_rcs,
+            altitude_m=altitude_m,
+            reference_center_idx=ref_idx,
+            reference_window_bins=fit_cfg["ref_window_bins"],
+        )
+        _, intercept_diag, _, _, _ = linear_rayleigh_calibration_factor(
+            measured_signal=glued_block[block_idx, :],
+            simulated_molecular_signal=simulated_molecular_rcs,
+            altitude_m=altitude_m,
+            reference_center_idx=ref_idx,
+            reference_window_bins=fit_cfg["ref_window_bins"],
+        )
+        qa = _evaluate_rayleigh_reference(glued_block[block_idx, :], simulated_molecular_rcs, altitude_m, ref_idx, fit_cfg["ref_window_bins"], fit_cfg, factor)
+        calibration_factor_block[block_idx] = factor
+        calibration_intercept_block[block_idx] = intercept_diag
+        ref_altitude_block[block_idx] = float(altitude_m[ref_idx])
+        ref_start_block[block_idx] = ref_start_m
+        ref_stop_block[block_idx] = ref_stop_m
+        ref_valid_bins_block[block_idx] = int(ref_valid_bins)
+        ref_relative_slope_block[block_idx] = float(qa["relative_slope"])
+        ref_relative_variance_block[block_idx] = float(qa["relative_variance"])
+        ref_valid_fraction_block[block_idx] = float(qa["valid_fraction"])
+        scaled_molecular_rcs_block[block_idx, :] = simulated_molecular_rcs * factor
+        scattering_ratio_block[block_idx, :] = _safe_ratio(glued_block[block_idx, :], scaled_molecular_rcs_block[block_idx, :])
+        kfs_branch_block[block_idx, :] = _build_kfs_branch(altitude_m, ref_start_m, ref_stop_m, kfs_mode)
+        if int(qa["success_flag"]) == 1:
+            rayleigh_success_block[block_idx] = 1
+            beta_mean, beta_std, alpha_mean, alpha_std = _run_kfs_profile(glued_block[block_idx, :], glued_error_block[block_idx, :], altitude_m, beta_mol, ref_idx, lr_base, lr_std, config)
+            beta_block[block_idx, :] = beta_mean
+            beta_block_std[block_idx, :] = beta_std
+            alpha_block[block_idx, :] = alpha_mean
+            alpha_block_std[block_idx, :] = alpha_std
+
+    valid_block = (gluing_success_block == 1) & (rayleigh_success_block == 1)
+    if not valid_block.any():
+        logger.warning(f"  -> {wavelength_nm} nm has no valid retrieval block. Mean optical products set to NaN.")
+
+    glued_mean = _valid_block_mean(glued_block, valid_block)
+    glued_error_mean = _valid_block_error(glued_error_block, valid_block)
+    scattering_ratio_mean = _valid_block_mean(scattering_ratio_block, valid_block)
+    beta_mean = _valid_block_mean(beta_block, valid_block)
+    beta_std_mean = _valid_block_error(beta_block_std, valid_block)
+    alpha_mean = _valid_block_mean(alpha_block, valid_block)
+    alpha_std_mean = _valid_block_error(alpha_block_std, valid_block)
+
+    if valid_block.any():
+        calibration_factor = float(np.nanmedian(calibration_factor_block[valid_block]))
+        calibration_intercept = float(np.nanmedian(calibration_intercept_block[valid_block]))
+        ref_altitude = float(np.nanmedian(ref_altitude_block[valid_block]))
+        ref_start = float(np.nanmedian(ref_start_block[valid_block]))
+        ref_stop = float(np.nanmedian(ref_stop_block[valid_block]))
+        ref_valid_bins = int(np.nanmedian(ref_valid_bins_block[valid_block]))
+        ref_rel_slope = float(np.nanmedian(ref_relative_slope_block[valid_block]))
+        ref_rel_var = float(np.nanmedian(ref_relative_variance_block[valid_block]))
+        ref_valid_fraction = float(np.nanmedian(ref_valid_fraction_block[valid_block]))
+        scaled_molecular_rcs = simulated_molecular_rcs * calibration_factor
+        kfs_branch = _build_kfs_branch(altitude_m, ref_start, ref_stop, kfs_mode)
+        rayleigh_success = 1
+    else:
+        calibration_factor = np.nan
+        calibration_intercept = np.nan
+        ref_altitude = np.nan
+        ref_start = np.nan
+        ref_stop = np.nan
+        ref_valid_bins = 0
+        ref_rel_slope = np.nan
+        ref_rel_var = np.nan
+        ref_valid_fraction = np.nan
+        scaled_molecular_rcs = np.full(n_alt, np.nan, dtype=np.float64)
+        kfs_branch = np.zeros(n_alt, dtype=np.int8)
+        rayleigh_success = 0
+
+    time_glued = _expand_blocks_to_time(glued_block, block_groups, n_time)
+    time_glued_error = _expand_blocks_to_time(glued_error_block, block_groups, n_time)
+    time_gluing_success = _expand_block_vector_to_time(gluing_success_block, block_groups, n_time, dtype=np.int8)
+    time_gluing_fallback = _expand_block_vector_to_time(gluing_fallback_block, block_groups, n_time, dtype=np.int8)
+    time_gluing_split = _expand_block_vector_to_time(gluing_split_block, block_groups, n_time)
+    time_gluing_start = _expand_block_vector_to_time(gluing_start_block, block_groups, n_time)
+    time_gluing_stop = _expand_block_vector_to_time(gluing_stop_block, block_groups, n_time)
+    time_gluing_slope = _expand_block_vector_to_time(gluing_slope_block, block_groups, n_time)
+    time_gluing_intercept = _expand_block_vector_to_time(gluing_intercept_block, block_groups, n_time)
+    time_gluing_correlation = _expand_block_vector_to_time(gluing_correlation_block, block_groups, n_time)
+
     return {
         "wavelength": wavelength_nm,
         "block_time": block_time,
@@ -499,8 +629,9 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         "simulated_molecular_signal": simulated_signal,
         "simulated_molecular_range_corrected_signal": simulated_molecular_rcs,
         "scaled_molecular_range_corrected_signal": scaled_molecular_rcs,
-        "glued_range_corrected_signal": glued,
-        "glued_range_corrected_signal_error": glued_error,
+        "scaled_molecular_range_corrected_signal_block": scaled_molecular_rcs_block,
+        "glued_range_corrected_signal": time_glued,
+        "glued_range_corrected_signal_error": time_glued_error,
         "glued_range_corrected_signal_block": glued_block,
         "glued_range_corrected_signal_error_block": glued_error_block,
         "glued_range_corrected_signal_mean": glued_mean,
@@ -508,37 +639,57 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         "scattering_ratio_mean": scattering_ratio_mean,
         "scattering_ratio_block": scattering_ratio_block,
         "aerosol_backscatter": beta_mean,
-        "aerosol_backscatter_error": beta_std,
+        "aerosol_backscatter_error": beta_std_mean,
         "aerosol_extinction": alpha_mean,
-        "aerosol_extinction_error": alpha_std,
-        "aerosol_backscatter_block": np.stack(beta_block, axis=0),
-        "aerosol_backscatter_error_block": np.stack(beta_block_std, axis=0),
-        "aerosol_extinction_block": np.stack(alpha_block, axis=0),
-        "aerosol_extinction_error_block": np.stack(alpha_block_std, axis=0),
-        "rayleigh_reference_altitude_m": float(altitude_m[ref_idx]),
-        "rayleigh_reference_start_altitude_m": ref_start_m,
-        "rayleigh_reference_stop_altitude_m": ref_stop_m,
+        "aerosol_extinction_error": alpha_std_mean,
+        "aerosol_backscatter_block": beta_block,
+        "aerosol_backscatter_error_block": beta_block_std,
+        "aerosol_extinction_block": alpha_block,
+        "aerosol_extinction_error_block": alpha_block_std,
+        "valid_retrieval_block_flag": valid_block.astype(np.int8),
+        "rayleigh_reference_altitude_m": ref_altitude,
+        "rayleigh_reference_start_altitude_m": ref_start,
+        "rayleigh_reference_stop_altitude_m": ref_stop,
         "rayleigh_reference_valid_bins": ref_valid_bins,
-        "rayleigh_reference_success_flag": rayleigh_qa["success_flag"],
-        "rayleigh_reference_relative_slope": rayleigh_qa["relative_slope"],
-        "rayleigh_reference_relative_variance": rayleigh_qa["relative_variance"],
-        "rayleigh_reference_valid_fraction": rayleigh_qa["valid_fraction"],
+        "rayleigh_reference_success_flag": rayleigh_success,
+        "rayleigh_reference_relative_slope": ref_rel_slope,
+        "rayleigh_reference_relative_variance": ref_rel_var,
+        "rayleigh_reference_valid_fraction": ref_valid_fraction,
         "rayleigh_calibration_factor": calibration_factor,
         "rayleigh_calibration_intercept": calibration_intercept,
+        "rayleigh_reference_altitude_m_block": ref_altitude_block,
+        "rayleigh_reference_start_altitude_m_block": ref_start_block,
+        "rayleigh_reference_stop_altitude_m_block": ref_stop_block,
+        "rayleigh_reference_valid_bins_block": ref_valid_bins_block,
+        "rayleigh_reference_success_flag_block": rayleigh_success_block,
+        "rayleigh_reference_relative_slope_block": ref_relative_slope_block,
+        "rayleigh_reference_relative_variance_block": ref_relative_variance_block,
+        "rayleigh_reference_valid_fraction_block": ref_valid_fraction_block,
+        "rayleigh_calibration_factor_block": calibration_factor_block,
+        "rayleigh_calibration_intercept_block": calibration_intercept_block,
         "lidar_ratio_assumed_sr": lr_base,
         "lidar_ratio_std_sr": lr_std,
-        "kfs_branch": _build_kfs_branch(altitude_m, ref_start_m, ref_stop_m, kfs_mode),
-        "gluing_success_flag": gluing["success_flag"],
-        "gluing_fallback_flag": gluing["fallback_flag"],
-        "gluing_split_altitude_m": gluing["split_altitude_m"],
-        "gluing_start_altitude_m": gluing["start_altitude_m"],
-        "gluing_stop_altitude_m": gluing["stop_altitude_m"],
-        "gluing_slope": gluing["slope"],
-        "gluing_intercept": gluing["intercept"],
-        "gluing_correlation": gluing["correlation"],
-        "gluing_source": gluing["source"],
-        "analog_channel": gluing["analog_channel"],
-        "photon_channel": gluing["photon_channel"],
+        "kfs_branch": kfs_branch,
+        "kfs_branch_block": kfs_branch_block,
+        "gluing_success_flag": time_gluing_success,
+        "gluing_fallback_flag": time_gluing_fallback,
+        "gluing_split_altitude_m": time_gluing_split,
+        "gluing_start_altitude_m": time_gluing_start,
+        "gluing_stop_altitude_m": time_gluing_stop,
+        "gluing_slope": time_gluing_slope,
+        "gluing_intercept": time_gluing_intercept,
+        "gluing_correlation": time_gluing_correlation,
+        "gluing_success_flag_block": gluing_success_block,
+        "gluing_fallback_flag_block": gluing_fallback_block,
+        "gluing_split_altitude_m_block": gluing_split_block,
+        "gluing_start_altitude_m_block": gluing_start_block,
+        "gluing_stop_altitude_m_block": gluing_stop_block,
+        "gluing_slope_block": gluing_slope_block,
+        "gluing_intercept_block": gluing_intercept_block,
+        "gluing_correlation_block": gluing_correlation_block,
+        "gluing_source": source,
+        "analog_channel": analog_ch,
+        "photon_channel": photon_ch,
     }
 
 
@@ -570,6 +721,7 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "simulated_molecular_signal": (("wavelength", "altitude"), stack("simulated_molecular_signal")),
             "simulated_molecular_range_corrected_signal": (("wavelength", "altitude"), stack("simulated_molecular_range_corrected_signal")),
             "scaled_molecular_range_corrected_signal": (("wavelength", "altitude"), stack("scaled_molecular_range_corrected_signal")),
+            "scaled_molecular_range_corrected_signal_block": (("block_time", "wavelength", "altitude"), stack_block("scaled_molecular_range_corrected_signal_block")),
             "glued_range_corrected_signal": (("time", "wavelength", "altitude"), stack_time("glued_range_corrected_signal")),
             "glued_range_corrected_signal_error": (("time", "wavelength", "altitude"), stack_time("glued_range_corrected_signal_error")),
             "glued_range_corrected_signal_block": (("block_time", "wavelength", "altitude"), stack_block("glued_range_corrected_signal_block")),
@@ -590,6 +742,7 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "aerosol_backscatter_error_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_backscatter_error_block")),
             "aerosol_extinction_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_extinction_block")),
             "aerosol_extinction_error_block": (("block_time", "wavelength", "altitude"), stack_block("aerosol_extinction_error_block")),
+            "valid_retrieval_block_flag": (("block_time", "wavelength"), stack_block("valid_retrieval_block_flag").astype(np.int8)),
             "rayleigh_reference_altitude_m": (("wavelength",), vector("rayleigh_reference_altitude_m")),
             "rayleigh_reference_start_altitude_m": (("wavelength",), vector("rayleigh_reference_start_altitude_m")),
             "rayleigh_reference_stop_altitude_m": (("wavelength",), vector("rayleigh_reference_stop_altitude_m")),
@@ -600,9 +753,20 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "rayleigh_reference_valid_fraction": (("wavelength",), vector("rayleigh_reference_valid_fraction")),
             "rayleigh_calibration_factor": (("wavelength",), vector("rayleigh_calibration_factor")),
             "rayleigh_calibration_intercept": (("wavelength",), vector("rayleigh_calibration_intercept")),
+            "rayleigh_reference_altitude_m_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_altitude_m_block")),
+            "rayleigh_reference_start_altitude_m_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_start_altitude_m_block")),
+            "rayleigh_reference_stop_altitude_m_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_stop_altitude_m_block")),
+            "rayleigh_reference_valid_bins_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_valid_bins_block")),
+            "rayleigh_reference_success_flag_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_success_flag_block").astype(np.int8)),
+            "rayleigh_reference_relative_slope_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_relative_slope_block")),
+            "rayleigh_reference_relative_variance_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_relative_variance_block")),
+            "rayleigh_reference_valid_fraction_block": (("block_time", "wavelength"), stack_block("rayleigh_reference_valid_fraction_block")),
+            "rayleigh_calibration_factor_block": (("block_time", "wavelength"), stack_block("rayleigh_calibration_factor_block")),
+            "rayleigh_calibration_intercept_block": (("block_time", "wavelength"), stack_block("rayleigh_calibration_intercept_block")),
             "lidar_ratio_assumed_sr": (("wavelength",), vector("lidar_ratio_assumed_sr")),
             "lidar_ratio_std_sr": (("wavelength",), vector("lidar_ratio_std_sr")),
             "kfs_branch": (("wavelength", "altitude"), stack("kfs_branch").astype(np.int8)),
+            "kfs_branch_block": (("block_time", "wavelength", "altitude"), stack_block("kfs_branch_block").astype(np.int8)),
             "gluing_success_flag": (("time", "wavelength"), stack_time("gluing_success_flag").astype(np.int8)),
             "gluing_fallback_flag": (("time", "wavelength"), stack_time("gluing_fallback_flag").astype(np.int8)),
             "gluing_split_altitude_m": (("time", "wavelength"), stack_time("gluing_split_altitude_m")),
@@ -611,35 +775,48 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
             "gluing_slope": (("time", "wavelength"), stack_time("gluing_slope")),
             "gluing_intercept": (("time", "wavelength"), stack_time("gluing_intercept")),
             "gluing_correlation": (("time", "wavelength"), stack_time("gluing_correlation")),
+            "gluing_success_flag_block": (("block_time", "wavelength"), stack_block("gluing_success_flag_block").astype(np.int8)),
+            "gluing_fallback_flag_block": (("block_time", "wavelength"), stack_block("gluing_fallback_flag_block").astype(np.int8)),
+            "gluing_split_altitude_m_block": (("block_time", "wavelength"), stack_block("gluing_split_altitude_m_block")),
+            "gluing_start_altitude_m_block": (("block_time", "wavelength"), stack_block("gluing_start_altitude_m_block")),
+            "gluing_stop_altitude_m_block": (("block_time", "wavelength"), stack_block("gluing_stop_altitude_m_block")),
+            "gluing_slope_block": (("block_time", "wavelength"), stack_block("gluing_slope_block")),
+            "gluing_intercept_block": (("block_time", "wavelength"), stack_block("gluing_intercept_block")),
+            "gluing_correlation_block": (("block_time", "wavelength"), stack_block("gluing_correlation_block")),
         },
         coords=coords,
         attrs=dict(ds_l1.attrs),
     )
     ds_l2["altitude"].attrs.update({"units": "m", "long_name": "Altitude above station"})
     ds_l2["wavelength"].attrs.update({"units": "nm"})
-    ds_l2["scattering_ratio_mean"].attrs.update({"units": "1", "description": "Mean glued range-corrected signal divided by scaled molecular range-corrected signal."})
-    ds_l2["scattering_ratio_block"].attrs.update({"units": "1", "description": "Temporal-block scattering ratio from block-mean glued RCS and scaled molecular RCS."})
-    ds_l2["rayleigh_calibration_intercept"].attrs.update({"description": "Intercept from linear Rayleigh fit measured_RCS = slope * molecular_RCS + intercept."})
+    ds_l2["valid_retrieval_block_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "invalid valid", "description": "Block passed both gluing and Rayleigh-reference QA and was used in mean optical products."})
+    ds_l2["scattering_ratio_mean"].attrs.update({"units": "1", "description": "Mean of valid block scattering ratios."})
+    ds_l2["scattering_ratio_block"].attrs.update({"units": "1", "description": "Block scattering ratio from block-mean glued RCS and block-scaled molecular RCS."})
+    ds_l2["rayleigh_calibration_intercept"].attrs.update({"description": "Median intercept from free linear Rayleigh diagnostic fit. The main calibration factor is constrained through the origin."})
     ds_l2["kfs_branch"].attrs.update({"flag_values": "0, 1, 2, 3", "flag_meanings": "invalid backward_below_reference reference_window forward_above_reference_experimental", "description": "KFS/Fernald-Sasano retrieval branch by altitude. Above-reference two-sided retrieval is experimental and noise-sensitive."})
     ds_l2["gluing_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
     ds_l2["gluing_fallback_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used photon_counting_fallback_used"})
+    ds_l2["gluing_success_flag_block"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed success"})
+    ds_l2["gluing_fallback_flag_block"].attrs.update({"flag_values": "0, 1", "flag_meanings": "not_used photon_counting_fallback_used"})
     ds_l2["gluing_start_altitude_m"].attrs.update({"units": "m", "description": "Start altitude of analog/photon-counting fade-in/fade-out gluing window."})
     ds_l2["gluing_stop_altitude_m"].attrs.update({"units": "m", "description": "Stop altitude of analog/photon-counting fade-in/fade-out gluing window."})
-    ds_l2["rayleigh_reference_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed passed", "description": "Whether the Rayleigh reference window passed slope, variance, valid-fraction and positive-calibration checks."})
-    ds_l2["rayleigh_reference_relative_slope"].attrs.update({"units": "1", "description": "Relative ratio change across the Rayleigh reference window."})
-    ds_l2["rayleigh_reference_relative_variance"].attrs.update({"units": "1", "description": "Variance of measured/molecular ratio normalized by squared mean ratio."})
-    ds_l2["rayleigh_reference_valid_fraction"].attrs.update({"units": "1", "description": "Fraction of finite positive bins in the Rayleigh reference window."})
+    ds_l2["rayleigh_reference_success_flag"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed passed", "description": "Whether at least one block Rayleigh reference passed QA."})
+    ds_l2["rayleigh_reference_success_flag_block"].attrs.update({"flag_values": "0, 1", "flag_meanings": "failed passed", "description": "Whether the block Rayleigh reference passed slope, variance, valid-fraction and positive-calibration checks."})
+    ds_l2["rayleigh_reference_relative_slope"].attrs.update({"units": "1", "description": "Median relative ratio change across valid block Rayleigh reference windows."})
+    ds_l2["rayleigh_reference_relative_variance"].attrs.update({"units": "1", "description": "Median variance of measured/molecular ratio normalized by squared mean ratio."})
+    ds_l2["rayleigh_reference_valid_fraction"].attrs.update({"units": "1", "description": "Median fraction of finite positive bins in valid Rayleigh reference windows."})
     fit_cfg = _get_molecular_fit_config(config)
     ds_l2.attrs.update(
         {
-            "Processing_level": "Level 2: LEBEAR block and mean optical inversion",
+            "Processing_level": "Level 2: LEBEAR block-based optical inversion",
             "Pipeline": "MILGRAU/LEBEAR",
             "Input_Level1_File": source_file.name,
-            "LEBEAR_Mode": "block_and_mean_kfs",
+            "LEBEAR_Mode": "block_mean_gluing_rayleigh_kfs",
+            "LEBEAR_Block_Average_Minutes": _get_block_average_minutes(config),
             "KFS_Mode": kfs_mode,
             "KFS_Mode_Description": _kfs_mode_description(kfs_mode),
             "Molecular_Rayleigh_Method": "Bucholtz-style Rayleigh scattering with angular backscatter at 180 degrees.",
-            "Rayleigh_Calibration_Method": "Linear fit measured_RCS = slope * molecular_RCS + intercept; slope scales the molecular RCS.",
+            "Rayleigh_Calibration_Method": "Block-wise multiplicative fit constrained through origin; free intercept retained as a background diagnostic.",
             "Gluing_Error_Propagation": "Weighted one-sigma propagation across fade window: sigma² = w_an²(slope sigma_an)² + w_pc² sigma_pc².",
             "Rayleigh_Reference_Max_Relative_Slope": float(fit_cfg["max_relative_slope"]),
             "Rayleigh_Reference_Max_Relative_Variance": float(fit_cfg["max_relative_variance"]),
@@ -654,7 +831,7 @@ def _build_level2_dataset(ds_l1: xr.Dataset, results: list[dict[str, Any]], alti
 
 
 def process_single_level1_file(nc_file: str | Path, config: Mapping[str, Any], logger: logging.Logger) -> str:
-    """Process one Level 1 file into an initial Level 2 optical product."""
+    """Process one Level 1 file into a Level 2 optical product."""
     nc_path = Path(nc_file)
     try:
         with xr.open_dataset(nc_path) as ds_l1:
