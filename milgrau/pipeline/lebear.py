@@ -401,7 +401,7 @@ def _valid_block_error(block_error_matrix: np.ndarray, valid_block: np.ndarray) 
 
 
 def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.ndarray, config: Mapping[str, Any], logger: logging.Logger) -> dict[str, Any]:
-    """Process one wavelength using 15-minute block retrievals."""
+    """Process one wavelength using block retrievals."""
     analog_ch, photon_ch = _infer_channel_pair(ds_l1, wavelength_nm)
     if analog_ch is None and photon_ch is None:
         raise ValueError(f"No channel found for wavelength {wavelength_nm} nm.")
@@ -421,8 +421,6 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         photon_block = _mean_by_groups(photon_signal, block_groups)
         photon_error_block = _error_by_groups(photon_error, block_groups)
     else:
-        photon_signal = None
-        photon_error = None
         photon_block = None
         photon_error_block = None
 
@@ -432,8 +430,6 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         analog_block = _mean_by_groups(analog_signal, block_groups)
         analog_error_block = _error_by_groups(analog_error, block_groups)
     else:
-        analog_signal = None
-        analog_error = None
         analog_block = None
         analog_error_block = None
 
@@ -480,6 +476,8 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
                 glued_block[block_idx, :] = photon_block[block_idx, :]
                 glued_error_block[block_idx, :] = photon_error_block[block_idx, :]
                 gluing_fallback_block[block_idx] = 1
+        if gluing_success_block.sum() == 0 and not gluing_cfg["fallback_to_photon_counting"]:
+            raise ValueError(f"{wavelength_nm} nm has no successful block gluing and photon fallback is disabled.")
         logger.info(f"  -> {wavelength_nm} nm block gluing success: {100.0 * gluing_success_block.sum() / max(n_block, 1):.1f}% ({analog_ch} + {photon_ch}); fallback blocks: {int(gluing_fallback_block.sum())}.")
     else:
         fallback_ch = photon_ch or analog_ch
@@ -487,6 +485,8 @@ def _process_wavelength(ds_l1: xr.Dataset, wavelength_nm: int, altitude_m: np.nd
         fallback_error_block = photon_error_block if photon_error_block is not None else analog_error_block
         if fallback_ch is None or fallback_block is None or fallback_error_block is None:
             raise ValueError(f"No usable channel found for wavelength {wavelength_nm} nm.")
+        if not gluing_cfg["fallback_to_photon_counting"]:
+            raise ValueError(f"{wavelength_nm} nm cannot perform gluing because only {fallback_ch} is available and photon fallback is disabled.")
         glued_block[:, :] = fallback_block
         glued_error_block[:, :] = fallback_error_block
         gluing_fallback_block[:] = 1
