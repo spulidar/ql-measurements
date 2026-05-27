@@ -132,8 +132,7 @@ inversion:
   enabled: true
   interactive_qa: true
   wavelengths_to_process: [355, 532]
-  temporal_average_minutes: 15
-  block_average_minutes: 15
+  block_average_minutes: 20
   kfs_mode: "two_sided"
   products:
     save_glued_signal: true
